@@ -1,0 +1,334 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="TRAYVANTA – Intelligent Refrigerator Tray Monitoring System. Real-time IoT monitoring for environment, tray temperature, gas air quality, and tray weight using ESP32 and Web Serial API.">
+  <title>TRAYVANTA | Intelligent Refrigerator Tray Monitoring System</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+  <!-- Top Browser Compatibility Notice (Hidden unless unsupported) -->
+  <div id="browser-warning-banner" class="banner banner-warning hidden" role="alert">
+    <div class="banner-content">
+      <svg class="banner-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+        <line x1="12" y1="9" x2="12" y2="13"/>
+        <line x1="12" y1="17" x2="12.01" y2="17"/>
+      </svg>
+      <span id="browser-warning-text">Your browser does not support Web Serial API. Please use Google Chrome or Microsoft Edge on a desktop.</span>
+    </div>
+  </div>
+
+  <!-- Header Section -->
+  <header class="header">
+    <div class="header-container">
+      <div class="header-brand">
+        <div class="brand-logo-badge">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="brand-icon">
+            <rect x="4" y="2" width="16" height="20" rx="2"/>
+            <line x1="4" y1="10" x2="20" y2="10"/>
+            <line x1="8" y1="6" x2="8.01" y2="6"/>
+            <line x1="8" y1="14" x2="8.01" y2="14"/>
+            <line x1="8" y1="17" x2="8.01" y2="17"/>
+          </svg>
+        </div>
+        <div class="brand-text">
+          <div class="brand-title-wrap">
+            <h1 class="brand-name">TRAYVANTA</h1>
+            <span class="brand-badge">SINGLE-TRAY PROTOTYPE</span>
+          </div>
+          <p class="brand-subtitle">Smart Refrigerator Monitoring System</p>
+          <p class="brand-tagline">Smart Monitoring. Better Food Preservation.</p>
+        </div>
+      </div>
+
+      <div class="header-actions">
+        <!-- Status Indicator -->
+        <div id="connection-status-pill" class="status-pill status-disconnected" aria-live="polite">
+          <span class="status-dot" id="status-dot"></span>
+          <span class="status-text" id="status-label">ESP32 Disconnected</span>
+        </div>
+
+        <!-- Connection Buttons -->
+        <button id="btn-connect" class="btn btn-primary" type="button" aria-label="Connect to ESP32">
+          <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/>
+            <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>
+          </svg>
+          <span id="btn-connect-label">CONNECT ESP32</span>
+        </button>
+
+        <button id="btn-disconnect" class="btn btn-outline-danger hidden" type="button" aria-label="Disconnect ESP32">
+          <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <line x1="18" y1="6" x2="6" y2="18"/>
+            <line x1="6" y1="6" x2="18" y2="18"/>
+          </svg>
+          <span>DISCONNECT</span>
+        </button>
+
+        <!-- Thresholds Settings Button -->
+        <button id="btn-settings" class="btn btn-secondary btn-icon-only" type="button" title="Alert Threshold Settings" aria-label="Open Threshold Settings">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="btn-icon">
+            <circle cx="12" cy="12" r="3"/>
+            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+          </svg>
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <!-- Main Container -->
+  <main class="main-content">
+    
+    <!-- Row 1 & 2: FOUR PRIMARY SENSOR CARDS -->
+    <section class="sensor-grid" aria-label="Sensor Readings">
+      
+      <!-- CARD 1: ENVIRONMENT MONITORING (DHT22) -->
+      <article class="sensor-card" id="card-environment">
+        <div class="card-header">
+          <div class="card-title-group">
+            <span class="sensor-badge">DHT22 SENSOR</span>
+            <h2 class="card-title">Environment Monitoring</h2>
+          </div>
+          <div class="card-status-badge status-badge-normal" id="env-status-badge">Normal</div>
+        </div>
+
+        <div class="card-body card-body-dual">
+          <div class="metric-block">
+            <span class="metric-label">Environment Temperature</span>
+            <div class="metric-value-wrap">
+              <span class="metric-value" id="val-env-temp">--</span>
+              <span class="metric-unit">°C</span>
+            </div>
+          </div>
+          <div class="metric-divider"></div>
+          <div class="metric-block">
+            <span class="metric-label">Environment Humidity</span>
+            <div class="metric-value-wrap">
+              <span class="metric-value" id="val-env-hum">--</span>
+              <span class="metric-unit">%</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="card-footer">
+          <span class="footer-note" id="env-footer-note">Ambient room condition tracking</span>
+          <span class="sensor-pin-hint">GPIO 4</span>
+        </div>
+      </article>
+
+      <!-- CARD 2: REFRIGERATOR TRAY TEMPERATURE (DS18B20) -->
+      <article class="sensor-card" id="card-tray-temp">
+        <div class="card-header">
+          <div class="card-title-group">
+            <span class="sensor-badge">DS18B20 PROBE</span>
+            <h2 class="card-title">Refrigerator Tray Temperature</h2>
+          </div>
+          <div class="card-status-badge status-badge-normal" id="tray-temp-status-badge">Normal</div>
+        </div>
+
+        <div class="card-body">
+          <div class="metric-block">
+            <span class="metric-label">Tray Temperature</span>
+            <div class="metric-value-wrap">
+              <span class="metric-value" id="val-tray-temp">--</span>
+              <span class="metric-unit">°C</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="card-footer">
+          <span class="footer-note" id="tray-temp-footer-note">Thresholds: &lt; 5.00°C Normal | &gt; 8.00°C Critical</span>
+          <span class="sensor-pin-hint">GPIO 16</span>
+        </div>
+      </article>
+
+      <!-- CARD 3: GAS / AIR QUALITY MONITORING (MQ135) -->
+      <article class="sensor-card" id="card-mq135">
+        <div class="card-header">
+          <div class="card-title-group">
+            <span class="sensor-badge">MQ135 GAS SENSOR</span>
+            <h2 class="card-title">Gas / Air Quality Monitoring</h2>
+          </div>
+          <div class="card-status-badge status-badge-normal" id="gas-status-badge">Normal</div>
+        </div>
+
+        <div class="card-body card-body-dual">
+          <div class="metric-block">
+            <span class="metric-label">MQ135 Raw ADC</span>
+            <div class="metric-value-wrap">
+              <span class="metric-value" id="val-mq135-raw">--</span>
+            </div>
+          </div>
+          <div class="metric-divider"></div>
+          <div class="metric-block">
+            <span class="metric-label">Sensor Voltage</span>
+            <div class="metric-value-wrap">
+              <span class="metric-value" id="val-mq135-voltage">--</span>
+              <span class="metric-unit">V</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="card-footer">
+          <span class="footer-note footer-note-alertable" id="gas-footer-note">Filtered ADC reading (Safe attenuation: 11dB)</span>
+          <span class="sensor-pin-hint">GPIO 34</span>
+        </div>
+      </article>
+
+      <!-- CARD 4: TRAY WEIGHT MONITORING (5KG LOAD CELL + HX711) -->
+      <article class="sensor-card" id="card-weight">
+        <div class="card-header">
+          <div class="card-title-group">
+            <span class="sensor-badge">5KG LOAD CELL + HX711</span>
+            <h2 class="card-title">Tray Weight Monitoring</h2>
+          </div>
+          <div class="card-status-badge status-badge-normal" id="weight-status-badge">Connected</div>
+        </div>
+
+        <div class="card-body">
+          <div class="metric-block metric-block-hero">
+            <span class="metric-label">TRAY WEIGHT</span>
+            <div class="metric-value-wrap metric-value-hero">
+              <span class="metric-value" id="val-tray-weight">--</span>
+              <span class="metric-unit">KG</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="card-footer">
+          <span class="footer-note" id="weight-footer-note">Startup baseline zeroed • Noise threshold: 1500 • Divisor: 12000</span>
+          <span class="sensor-pin-hint">DT: 26 / SCK: 27</span>
+        </div>
+      </article>
+
+    </section>
+
+    <!-- EMERGENCY ALERT SECTION -->
+    <section id="emergency-alert-section" class="alert-section" aria-live="assertive">
+      <div id="alert-panel" class="alert-panel alert-panel-normal">
+        <div class="alert-indicator-col">
+          <div id="alert-icon-box" class="alert-icon-box">
+            <svg id="alert-icon-normal" class="alert-svg-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/>
+              <polyline points="22 4 12 14.01 9 11.01"/>
+            </svg>
+            <svg id="alert-icon-emergency" class="alert-svg-icon hidden" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+              <line x1="12" y1="9" x2="12" y2="13"/>
+              <line x1="12" y1="17" x2="12.01" y2="17"/>
+            </svg>
+          </div>
+        </div>
+
+        <div class="alert-text-col">
+          <div class="alert-title-row">
+            <h3 id="alert-title" class="alert-title">SYSTEM STATUS: ALL PARAMETERS NORMAL</h3>
+            <span id="alert-level-badge" class="alert-level-badge level-normal">NORMAL</span>
+          </div>
+          <p id="alert-description" class="alert-description">
+            All tray parameters are within acceptable safe ranges. No gas anomalies or temperature deviations detected.
+          </p>
+          <div class="alert-meta-row">
+            <span id="alert-parameter-detail" class="alert-meta-item">Monitored Sensors: DHT22, DS18B20, MQ135, HX711</span>
+            <span id="alert-timestamp" class="alert-meta-item">Last Checked: --:--:--</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ESP32 LIVE SERIAL MONITOR -->
+    <section class="console-section" aria-label="ESP32 Live Serial Monitor">
+      <div class="console-card">
+        <div class="console-header">
+          <div class="console-title-group">
+            <div class="console-led" id="console-led"></div>
+            <h3 class="console-title">ESP32 LIVE SERIAL MONITOR</h3>
+            <span class="console-baud-badge">115200 BAUD (USB-CDC)</span>
+          </div>
+
+          <div class="console-actions">
+            <span class="console-counter" id="packet-counter">Packets: 0</span>
+            <label class="console-toggle-label" title="Automatically scroll to latest reading">
+              <input type="checkbox" id="chk-autoscroll" checked>
+              <span>Auto-Scroll</span>
+            </label>
+            <button id="btn-clear-console" class="btn btn-sm btn-ghost" type="button" title="Clear console messages">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="btn-icon-sm">
+                <polyline points="3 6 5 6 21 6"/>
+                <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+              </svg>
+              <span>Clear</span>
+            </button>
+          </div>
+        </div>
+
+        <div class="console-body" id="serial-terminal" role="log" aria-live="polite">
+          <div class="terminal-line terminal-system">
+            <span class="t-time">[00:00:00]</span>
+            <span class="t-msg">TRAYVANTA Web Dashboard initialized. Click "CONNECT ESP32" to start USB Serial reception.</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- Threshold Settings Modal -->
+  <div id="settings-modal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+    <div class="modal-box">
+      <div class="modal-header">
+        <h3 id="modal-title" class="modal-title">Configurable Alert Thresholds</h3>
+        <button id="btn-close-modal" class="btn-icon-only modal-close-btn" type="button" aria-label="Close Settings">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <line x1="18" y1="6" x2="6" y2="18"/>
+            <line x1="6" y1="6" x2="18" y2="18"/>
+          </svg>
+        </button>
+      </div>
+
+      <form id="settings-form" class="modal-form">
+        <div class="form-group">
+          <label for="input-temp-warning">Tray Temperature Warning (°C)</label>
+          <input type="number" id="input-temp-warning" step="0.1" value="5.0" required>
+          <span class="input-hint">Temperatures above this generate an orange warning status.</span>
+        </div>
+
+        <div class="form-group">
+          <label for="input-temp-critical">Tray Temperature Critical (°C)</label>
+          <input type="number" id="input-temp-critical" step="0.1" value="8.0" required>
+          <span class="input-hint">Temperatures above this trigger a critical refrigerator alert.</span>
+        </div>
+
+        <div class="form-group">
+          <label for="input-mq135-warning">MQ135 Gas Warning (Raw ADC)</label>
+          <input type="number" id="input-mq135-warning" step="10" value="1600" required>
+          <span class="input-hint">Gas ADC above this marks air quality as Warning.</span>
+        </div>
+
+        <div class="form-group">
+          <label for="input-mq135-critical">MQ135 Gas Critical (Raw ADC)</label>
+          <input type="number" id="input-mq135-critical" step="10" value="2200" required>
+          <span class="input-hint">Gas ADC above this triggers "Possible Food Spoilage / Gas Anomaly Detected".</span>
+        </div>
+
+        <div class="modal-actions">
+          <button type="button" id="btn-reset-thresholds" class="btn btn-secondary">Reset to Defaults</button>
+          <button type="submit" class="btn btn-primary">Save Thresholds</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <footer class="app-footer">
+    <p>TRAYVANTA &bull; Intelligent Refrigerator Tray Monitoring System &bull; Single-Tray Prototype</p>
+  </footer>
+
+  <script src="script.js"></script>
+</body>
+</html>
