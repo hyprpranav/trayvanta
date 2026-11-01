@@ -3,16 +3,22 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta name="description" content="TRAYVANTA – Intelligent Refrigerator Tray Monitoring System. Real-time IoT monitoring for environment, tray temperature, gas air quality, and tray weight using ESP32 and Web Serial API.">
-  <title>TRAYVANTA | Intelligent Refrigerator Tray Monitoring System</title>
+  <meta name="description" content="TRAYVANTA – Smart Refrigeration Digital Twin & Food Inventory Management System. Real-time IoT monitoring, tray weight tracking, rule-based food risk analysis, and Firebase cloud persistence.">
+  <title>TRAYVANTA | Smart Refrigeration Digital Twin & Inventory System</title>
+  
+  <!-- Modern Typography: Inter & JetBrains Mono -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  
   <link rel="stylesheet" href="style.css">
 </head>
-<body>
+<body class="dark-theme">
 
-  <!-- Top Browser Compatibility Notice (Hidden unless unsupported) -->
+  <!-- Mobile Navigation Overlay Backdrop -->
+  <div id="sidebar-backdrop" class="sidebar-backdrop hidden"></div>
+
+  <!-- Top Browser Compatibility Notice (Hidden unless Web Serial is unsupported) -->
   <div id="browser-warning-banner" class="banner banner-warning hidden" role="alert">
     <div class="banner-content">
       <svg class="banner-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -20,270 +26,1160 @@
         <line x1="12" y1="9" x2="12" y2="13"/>
         <line x1="12" y1="17" x2="12.01" y2="17"/>
       </svg>
-      <span id="browser-warning-text">Your browser does not support Web Serial API. Please use Google Chrome or Microsoft Edge on a desktop.</span>
+      <span id="browser-warning-text">Web Serial API requires Google Chrome or Microsoft Edge on a desktop for physical ESP32 communication. You can use <strong>Demo Mode</strong> to evaluate all features on any browser.</span>
     </div>
   </div>
 
-  <!-- Header Section -->
-  <header class="header">
-    <div class="header-container">
-      <div class="header-brand">
-        <div class="brand-logo-badge">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="brand-icon">
+  <div class="app-layout">
+    
+    <!-- =========================================================================
+         LEFT SIDEBAR NAVIGATION
+         ========================================================================= -->
+    <aside id="app-sidebar" class="app-sidebar">
+      <div class="sidebar-brand">
+        <div class="brand-badge-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="brand-svg">
             <rect x="4" y="2" width="16" height="20" rx="2"/>
             <line x1="4" y1="10" x2="20" y2="10"/>
-            <line x1="8" y1="6" x2="8.01" y2="6"/>
-            <line x1="8" y1="14" x2="8.01" y2="14"/>
-            <line x1="8" y1="17" x2="8.01" y2="17"/>
+            <circle cx="8" cy="6" r="1" fill="currentColor"/>
+            <circle cx="8" cy="14" r="1" fill="currentColor"/>
+            <line x1="12" y1="14" x2="16" y2="14"/>
+            <line x1="12" y1="17" x2="16" y2="17"/>
           </svg>
         </div>
-        <div class="brand-text">
-          <div class="brand-title-wrap">
-            <h1 class="brand-name">TRAYVANTA</h1>
-            <span class="brand-badge">SINGLE-TRAY PROTOTYPE</span>
+        <div class="brand-meta">
+          <h1 class="brand-title">TRAYVANTA</h1>
+          <span class="brand-subtitle">SMART REFRIGERATION SYSTEM</span>
+          <span class="brand-tag">SINGLE-TRAY DIGITAL TWIN</span>
+        </div>
+        <button id="btn-sidebar-close" class="btn-icon-only mobile-only-btn" type="button" aria-label="Close navigation sidebar">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+      </div>
+
+      <nav class="sidebar-nav" aria-label="Main Navigation">
+        <div class="nav-section-label">MAIN MODULES</div>
+
+        <button class="nav-item active" data-page="digital-twin" id="nav-digital-twin">
+          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <!-- Digital Twin Refrigerator Tray Icon -->
+            <path d="M3 7l9-4 9 4v10l-9 4-9-4V7z"/>
+            <path d="M3 7l9 4 9-4"/>
+            <path d="M12 11v10"/>
+          </svg>
+          <span class="nav-label">Digital Twin</span>
+          <span class="nav-pill-badge" id="tray-item-count-badge">0 Items</span>
+        </button>
+
+        <button class="nav-item" data-page="monitoring" id="nav-monitoring">
+          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <!-- Monitoring Gauge Icon -->
+            <path d="M22 12A10 10 0 1 0 12 22"/>
+            <path d="M12 12l5-5"/>
+            <circle cx="12" cy="12" r="2"/>
+          </svg>
+          <span class="nav-label">Monitoring</span>
+          <span class="nav-telemetry-live" id="nav-live-dot"></span>
+        </button>
+
+        <button class="nav-item" data-page="products" id="nav-products">
+          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <!-- Products Inventory Icon -->
+            <path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z"/>
+            <path d="m3.3 7 8.7 5 8.7-5"/>
+            <path d="M12 22V12"/>
+          </svg>
+          <span class="nav-label">Products</span>
+          <span class="nav-pill-badge" id="inventory-total-badge">0</span>
+        </button>
+
+        <button class="nav-item" data-page="risk-analysis" id="nav-risk-analysis">
+          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <!-- Risk Shield Icon -->
+            <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+            <path d="M12 8v4"/>
+            <path d="M12 16h.01"/>
+          </svg>
+          <span class="nav-label">Risk Analysis</span>
+          <span class="nav-risk-pill" id="nav-risk-summary-pill">SAFE</span>
+        </button>
+
+        <button class="nav-item" data-page="history" id="nav-history">
+          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <!-- History Records Icon -->
+            <circle cx="12" cy="12" r="10"/>
+            <polyline points="12 6 12 12 16 14"/>
+          </svg>
+          <span class="nav-label">History & Export</span>
+        </button>
+      </nav>
+
+      <!-- Sidebar Bottom Telemetry Widget -->
+      <div class="sidebar-footer">
+        <div class="tray-telemetry-mini-card">
+          <div class="mini-card-header">
+            <span class="mini-label">TRAY SUMMARY</span>
+            <span class="mini-status" id="mini-tray-status">NOMINAL</span>
           </div>
-          <p class="brand-subtitle">Smart Refrigerator Monitoring System</p>
-          <p class="brand-tagline">Smart Monitoring. Better Food Preservation.</p>
+          <div class="mini-metrics-row">
+            <div class="mini-metric">
+              <span class="mini-metric-title">Tray Temp</span>
+              <span class="mini-metric-val" id="mini-tray-temp">-- °C</span>
+            </div>
+            <div class="mini-metric">
+              <span class="mini-metric-title">Load</span>
+              <span class="mini-metric-val" id="mini-tray-weight">-- KG</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="hardware-spec-info">
+          <span class="spec-text">ESP32 • 5KG Load Cell • DS18B20 • MQ135</span>
         </div>
       </div>
+    </aside>
 
-      <div class="header-actions">
-        <!-- Status Indicator -->
-        <div id="connection-status-pill" class="status-pill status-disconnected" aria-live="polite">
-          <span class="status-dot" id="status-dot"></span>
-          <span class="status-text" id="status-label">ESP32 Disconnected</span>
-        </div>
-
-        <!-- Connection Buttons -->
-        <button id="btn-connect" class="btn btn-primary" type="button" aria-label="Connect to ESP32">
-          <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/>
-            <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>
-          </svg>
-          <span id="btn-connect-label">CONNECT ESP32</span>
-        </button>
-
-        <button id="btn-disconnect" class="btn btn-outline-danger hidden" type="button" aria-label="Disconnect ESP32">
-          <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <line x1="18" y1="6" x2="6" y2="18"/>
-            <line x1="6" y1="6" x2="18" y2="18"/>
-          </svg>
-          <span>DISCONNECT</span>
-        </button>
-
-        <!-- Thresholds Settings Button -->
-        <button id="btn-settings" class="btn btn-secondary btn-icon-only" type="button" title="Alert Threshold Settings" aria-label="Open Threshold Settings">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="btn-icon">
-            <circle cx="12" cy="12" r="3"/>
-            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/>
-          </svg>
-        </button>
-      </div>
-    </div>
-  </header>
-
-  <!-- Main Container -->
-  <main class="main-content">
-    
-    <!-- Row 1 & 2: FOUR PRIMARY SENSOR CARDS -->
-    <section class="sensor-grid" aria-label="Sensor Readings">
+    <!-- =========================================================================
+         MAIN APPLICATION CONTENT AREA
+         ========================================================================= -->
+    <div class="app-main-viewport">
       
-      <!-- CARD 1: ENVIRONMENT MONITORING (DHT22) -->
-      <article class="sensor-card" id="card-environment">
-        <div class="card-header">
-          <div class="card-title-group">
-            <span class="sensor-badge">DHT22 SENSOR</span>
-            <h2 class="card-title">Environment Monitoring</h2>
-          </div>
-          <div class="card-status-badge status-badge-normal" id="env-status-badge">Normal</div>
-        </div>
-
-        <div class="card-body card-body-dual">
-          <div class="metric-block">
-            <span class="metric-label">Environment Temperature</span>
-            <div class="metric-value-wrap">
-              <span class="metric-value" id="val-env-temp">--</span>
-              <span class="metric-unit">°C</span>
-            </div>
-          </div>
-          <div class="metric-divider"></div>
-          <div class="metric-block">
-            <span class="metric-label">Environment Humidity</span>
-            <div class="metric-value-wrap">
-              <span class="metric-value" id="val-env-hum">--</span>
-              <span class="metric-unit">%</span>
-            </div>
-          </div>
-        </div>
-
-        <div class="card-footer">
-          <span class="footer-note" id="env-footer-note">Ambient room condition tracking</span>
-          <span class="sensor-pin-hint">GPIO 4</span>
-        </div>
-      </article>
-
-      <!-- CARD 2: REFRIGERATOR TRAY TEMPERATURE (DS18B20) -->
-      <article class="sensor-card" id="card-tray-temp">
-        <div class="card-header">
-          <div class="card-title-group">
-            <span class="sensor-badge">DS18B20 PROBE</span>
-            <h2 class="card-title">Refrigerator Tray Temperature</h2>
-          </div>
-          <div class="card-status-badge status-badge-normal" id="tray-temp-status-badge">Normal</div>
-        </div>
-
-        <div class="card-body">
-          <div class="metric-block">
-            <span class="metric-label">Tray Temperature</span>
-            <div class="metric-value-wrap">
-              <span class="metric-value" id="val-tray-temp">--</span>
-              <span class="metric-unit">°C</span>
-            </div>
-          </div>
-        </div>
-
-        <div class="card-footer">
-          <span class="footer-note" id="tray-temp-footer-note">Thresholds: &lt; 5.00°C Normal | &gt; 8.00°C Critical</span>
-          <span class="sensor-pin-hint">GPIO 16</span>
-        </div>
-      </article>
-
-      <!-- CARD 3: GAS / AIR QUALITY MONITORING (MQ135) -->
-      <article class="sensor-card" id="card-mq135">
-        <div class="card-header">
-          <div class="card-title-group">
-            <span class="sensor-badge">MQ135 GAS SENSOR</span>
-            <h2 class="card-title">Gas / Air Quality Monitoring</h2>
-          </div>
-          <div class="card-status-badge status-badge-normal" id="gas-status-badge">Normal</div>
-        </div>
-
-        <div class="card-body card-body-dual">
-          <div class="metric-block">
-            <span class="metric-label">MQ135 Raw ADC</span>
-            <div class="metric-value-wrap">
-              <span class="metric-value" id="val-mq135-raw">--</span>
-            </div>
-          </div>
-          <div class="metric-divider"></div>
-          <div class="metric-block">
-            <span class="metric-label">Sensor Voltage</span>
-            <div class="metric-value-wrap">
-              <span class="metric-value" id="val-mq135-voltage">--</span>
-              <span class="metric-unit">V</span>
-            </div>
-          </div>
-        </div>
-
-        <div class="card-footer">
-          <span class="footer-note footer-note-alertable" id="gas-footer-note">Filtered ADC reading (Safe attenuation: 11dB)</span>
-          <span class="sensor-pin-hint">GPIO 34</span>
-        </div>
-      </article>
-
-      <!-- CARD 4: TRAY WEIGHT MONITORING (5KG LOAD CELL + HX711) -->
-      <article class="sensor-card" id="card-weight">
-        <div class="card-header">
-          <div class="card-title-group">
-            <span class="sensor-badge">5KG LOAD CELL + HX711</span>
-            <h2 class="card-title">Tray Weight Monitoring</h2>
-          </div>
-          <div class="card-status-badge status-badge-normal" id="weight-status-badge">Connected</div>
-        </div>
-
-        <div class="card-body">
-          <div class="metric-block metric-block-hero">
-            <span class="metric-label">TRAY WEIGHT</span>
-            <div class="metric-value-wrap metric-value-hero">
-              <span class="metric-value" id="val-tray-weight">--</span>
-              <span class="metric-unit">KG</span>
-            </div>
-          </div>
-        </div>
-
-        <div class="card-footer">
-          <span class="footer-note" id="weight-footer-note">Startup baseline zeroed • Noise threshold: 1500 • Divisor: 12000</span>
-          <span class="sensor-pin-hint">DT: 26 / SCK: 27</span>
-        </div>
-      </article>
-
-    </section>
-
-    <!-- EMERGENCY ALERT SECTION -->
-    <section id="emergency-alert-section" class="alert-section" aria-live="assertive">
-      <div id="alert-panel" class="alert-panel alert-panel-normal">
-        <div class="alert-indicator-col">
-          <div id="alert-icon-box" class="alert-icon-box">
-            <svg id="alert-icon-normal" class="alert-svg-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/>
-              <polyline points="22 4 12 14.01 9 11.01"/>
+      <!-- Top Application Header -->
+      <header class="app-header">
+        <div class="header-left">
+          <button id="btn-sidebar-toggle" class="btn-icon-only hamburger-btn" type="button" aria-label="Toggle navigation menu">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <line x1="3" y1="12" x2="21" y2="12"/>
+              <line x1="3" y1="6" x2="21" y2="6"/>
+              <line x1="3" y1="18" x2="21" y2="18"/>
             </svg>
-            <svg id="alert-icon-emergency" class="alert-svg-icon hidden" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
-              <line x1="12" y1="9" x2="12" y2="13"/>
-              <line x1="12" y1="17" x2="12.01" y2="17"/>
+          </button>
+          
+          <div class="header-breadcrumb">
+            <span class="crumb-root">TRAYVANTA</span>
+            <span class="crumb-divider">/</span>
+            <span class="crumb-page" id="header-page-title">Digital Twin</span>
+          </div>
+        </div>
+
+        <div class="header-right">
+          <!-- Data Mode Badge (Live vs Simulated) -->
+          <div id="data-source-badge" class="data-mode-badge badge-live">
+            <span class="mode-dot"></span>
+            <span class="mode-text" id="data-source-label">LIVE DATA</span>
+          </div>
+
+          <!-- ESP32 Status Pill -->
+          <div id="connection-status-pill" class="status-pill status-disconnected" aria-live="polite">
+            <span class="status-dot" id="status-dot"></span>
+            <span class="status-text" id="status-label">ESP32 Disconnected</span>
+          </div>
+
+          <!-- Firebase Cloud Firestore Status Pill -->
+          <div id="firebase-status-pill" class="firebase-status-pill status-standby" title="Firebase Cloud Firestore Connection">
+            <svg class="firebase-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M4 14.899A7 7 0 1 1 15.71 8h1.79a4.5 4.5 0 0 1 2.5 8.242"/>
+              <path d="M12 12v9"/>
+              <path d="m8 17 4 4 4-4"/>
             </svg>
-          </div>
-        </div>
-
-        <div class="alert-text-col">
-          <div class="alert-title-row">
-            <h3 id="alert-title" class="alert-title">SYSTEM STATUS: ALL PARAMETERS NORMAL</h3>
-            <span id="alert-level-badge" class="alert-level-badge level-normal">NORMAL</span>
-          </div>
-          <p id="alert-description" class="alert-description">
-            All tray parameters are within acceptable safe ranges. No gas anomalies or temperature deviations detected.
-          </p>
-          <div class="alert-meta-row">
-            <span id="alert-parameter-detail" class="alert-meta-item">Monitored Sensors: DHT22, DS18B20, MQ135, HX711</span>
-            <span id="alert-timestamp" class="alert-meta-item">Last Checked: --:--:--</span>
-          </div>
-        </div>
-      </div>
-    </section>
-
-    <!-- ESP32 LIVE SERIAL MONITOR -->
-    <section class="console-section" aria-label="ESP32 Live Serial Monitor">
-      <div class="console-card">
-        <div class="console-header">
-          <div class="console-title-group">
-            <div class="console-led" id="console-led"></div>
-            <h3 class="console-title">ESP32 LIVE SERIAL MONITOR</h3>
-            <span class="console-baud-badge">115200 BAUD (USB-CDC)</span>
+            <span id="firebase-status-label">Cloud: Standby</span>
           </div>
 
-          <div class="console-actions">
-            <span class="console-counter" id="packet-counter">Packets: 0</span>
-            <label class="console-toggle-label" title="Automatically scroll to latest reading">
-              <input type="checkbox" id="chk-autoscroll" checked>
-              <span>Auto-Scroll</span>
-            </label>
-            <button id="btn-clear-console" class="btn btn-sm btn-ghost" type="button" title="Clear console messages">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="btn-icon-sm">
-                <polyline points="3 6 5 6 21 6"/>
-                <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+          <!-- College Demo Label -->
+          <span class="college-demo-tag" title="Academic Prototype Demonstration">COLLEGE DEMO</span>
+
+          <!-- Action Controls -->
+          <div class="header-controls">
+            <!-- Web Serial Connect/Disconnect -->
+            <button id="btn-connect" class="btn btn-primary" type="button" aria-label="Connect to ESP32">
+              <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/>
+                <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>
               </svg>
-              <span>Clear</span>
+              <span id="btn-connect-label">CONNECT ESP32</span>
+            </button>
+
+            <button id="btn-disconnect" class="btn btn-outline-danger hidden" type="button" aria-label="Disconnect ESP32">
+              <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <line x1="18" y1="6" x2="6" y2="18"/>
+                <line x1="6" y1="6" x2="18" y2="18"/>
+              </svg>
+              <span>DISCONNECT</span>
+            </button>
+
+            <!-- Dummy Simulation Mode Toggle -->
+            <button id="btn-demo-mode" class="btn btn-secondary btn-demo" type="button" title="Start illustrative hardware simulation without ESP32">
+              <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polygon points="5 3 19 12 5 21 5 3"/>
+              </svg>
+              <span id="btn-demo-label">START DEMO</span>
+            </button>
+
+            <!-- Settings Cog -->
+            <button id="btn-settings" class="btn btn-ghost btn-icon-only" type="button" title="Threshold & System Settings" aria-label="Threshold and system settings">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="btn-icon">
+                <circle cx="12" cy="12" r="3"/>
+                <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+              </svg>
             </button>
           </div>
         </div>
+      </header>
 
-        <div class="console-body" id="serial-terminal" role="log" aria-live="polite">
-          <div class="terminal-line terminal-system">
-            <span class="t-time">[00:00:00]</span>
-            <span class="t-msg">TRAYVANTA Web Dashboard initialized. Click "CONNECT ESP32" to start USB Serial reception.</span>
+      <!-- Simulation Active Banner -->
+      <div id="simulation-banner" class="simulation-banner hidden" role="region" aria-label="Demo mode control bar">
+        <div class="simulation-banner-content">
+          <div class="simulation-banner-info">
+            <span class="sim-pulse"></span>
+            <strong>SIMULATION DEMO ACTIVE:</strong>
+            <span>Illustrative telemetry running without physical ESP32. All features active.</span>
+          </div>
+          <div class="simulation-banner-actions">
+            <button id="btn-sim-temp-rise" class="btn btn-xs btn-amber" type="button" title="Simulate temperature rise to test Inspect & Remove alert rules">
+              Simulate Temp Rise
+            </button>
+            <button id="btn-sim-reset" class="btn btn-xs btn-secondary" type="button">
+              Reset Values
+            </button>
+            <button id="btn-sim-stop" class="btn btn-xs btn-ghost" type="button">
+              Stop Demo
+            </button>
           </div>
         </div>
       </div>
-    </section>
 
-  </main>
+      <!-- Main Pages Container -->
+      <main class="page-container">
 
-  <!-- Threshold Settings Modal -->
+        <!-- =====================================================================
+             MODULE 1: DIGITAL TWIN
+             ===================================================================== -->
+        <section id="page-digital-twin" class="page-section active" aria-labelledby="twin-heading">
+          <div class="section-title-wrap">
+            <div>
+              <h2 id="twin-heading" class="section-title">Digital Twin Refrigerator Tray Overview</h2>
+              <p class="section-desc">Single-tray real-time physical digital twin with product position tracking and sensor telemetry.</p>
+            </div>
+            <div class="section-actions">
+              <button class="btn btn-secondary btn-nav-action" data-target="monitoring">
+                <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 12A10 10 0 1 0 12 22"/><path d="M12 12l5-5"/></svg>
+                VIEW READINGS
+              </button>
+              <button class="btn btn-primary btn-nav-action" data-target="products">
+                <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z"/></svg>
+                VIEW INVENTORY
+              </button>
+            </div>
+          </div>
+
+          <!-- TOP SUMMARY CARDS (4 Cards) -->
+          <div class="summary-cards-grid">
+            <!-- Card 1: Refrigerator Temperature -->
+            <div class="summary-card" id="twin-card-temp">
+              <div class="summary-card-header">
+                <span class="card-kicker">DS18B20 PROBE</span>
+                <span class="status-chip status-chip-normal" id="twin-status-temp">Normal</span>
+              </div>
+              <div class="summary-card-metric">
+                <span class="metric-num" id="twin-val-temp">--</span>
+                <span class="metric-unit">°C</span>
+              </div>
+              <div class="summary-card-footer">
+                <span class="footer-title">Internal Tray Temperature</span>
+                <span class="footer-sub">Optimal: &le; 5.0 °C</span>
+              </div>
+            </div>
+
+            <!-- Card 2: Environment Humidity -->
+            <div class="summary-card" id="twin-card-hum">
+              <div class="summary-card-header">
+                <span class="card-kicker">DHT22 SENSOR</span>
+                <span class="status-chip status-chip-normal" id="twin-status-hum">Normal</span>
+              </div>
+              <div class="summary-card-metric">
+                <span class="metric-num" id="twin-val-hum">--</span>
+                <span class="metric-unit">%</span>
+              </div>
+              <div class="summary-card-footer">
+                <span class="footer-title">Relative Humidity</span>
+                <span class="footer-sub">Ambient Room Moisture</span>
+              </div>
+            </div>
+
+            <!-- Card 3: Stored Weight -->
+            <div class="summary-card" id="twin-card-weight">
+              <div class="summary-card-header">
+                <span class="card-kicker">5KG LOAD CELL</span>
+                <span class="status-chip status-chip-normal" id="twin-status-weight">Connected</span>
+              </div>
+              <div class="summary-card-metric">
+                <span class="metric-num" id="twin-val-weight">--</span>
+                <span class="metric-unit">KG</span>
+              </div>
+              <div class="summary-card-footer">
+                <span class="footer-title">Total Stored Weight</span>
+                <span class="footer-sub">HX711 Dynamic Load</span>
+              </div>
+            </div>
+
+            <!-- Card 4: Sensor Status -->
+            <div class="summary-card" id="twin-card-sensor-status">
+              <div class="summary-card-header">
+                <span class="card-kicker">SYSTEM STATUS</span>
+                <span class="status-chip status-chip-normal" id="twin-overall-chip">NOMINAL</span>
+              </div>
+              <div class="summary-card-metric summary-card-metric-sm">
+                <span class="status-headline" id="twin-overall-title">NOMINAL</span>
+              </div>
+              <div class="summary-card-footer">
+                <span class="footer-title">Atmospheric Air Quality</span>
+                <span class="footer-sub" id="twin-mq135-sub">MQ135 Gas: -- ADC</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- DIGITAL TWIN GRAPHICAL REFRIGERATOR TRAY REPRESENTATION -->
+          <div class="twin-compartment-container">
+            <div class="compartment-frame">
+              <!-- Refrigerator Top Cooling Vent & Ambient Lighting -->
+              <div class="refrigerator-roof">
+                <div class="cooling-vents">
+                  <span></span><span></span><span></span><span></span><span></span>
+                </div>
+                <div class="ambient-glow" id="refrigerator-ambient-glow"></div>
+                <div class="compartment-badge">REFRIGERATOR CHAMBER • ZONE 01</div>
+              </div>
+
+              <!-- Refrigerator Digital Twin Tray Box -->
+              <div class="digital-tray-box" id="digital-tray-box">
+                <div class="tray-rails tray-rail-left"></div>
+                <div class="tray-rails tray-rail-right"></div>
+                
+                <div class="tray-lip-header">
+                  <div class="tray-title-row">
+                    <div class="tray-id-badge">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="mini-icon"><rect x="3" y="3" width="18" height="18" rx="2"/></svg>
+                      <span>PHYSICAL TRAY 01 (5KG CAPACITY)</span>
+                    </div>
+                    <div class="tray-load-gauge">
+                      <span class="gauge-label">Tray Load:</span>
+                      <div class="gauge-track">
+                        <div class="gauge-fill" id="twin-tray-gauge-fill" style="width: 0%;"></div>
+                      </div>
+                      <span class="gauge-text" id="twin-tray-gauge-text">0.00 / 5.00 KG</span>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Stored Products Visualization Inside Tray -->
+                <div class="tray-surface" id="twin-tray-surface">
+                  <!-- Populated dynamically via JS -->
+                  <div class="tray-loading-placeholder">Loading tray inventory digital twin...</div>
+                </div>
+
+                <!-- Tray Front Lip & Status Footer -->
+                <div class="tray-front-acrylic">
+                  <div class="acrylic-spec">TRAYVANTA SMART LOAD TRAY • SENSOR-INSTRUMENTED</div>
+                  <div class="acrylic-telemetry">
+                    <span>Temp: <strong id="acrylic-temp">--°C</strong></span>
+                    <span class="divider">•</span>
+                    <span>Humidity: <strong id="acrylic-hum">--%</strong></span>
+                    <span class="divider">•</span>
+                    <span>Weight: <strong id="acrylic-weight">-- KG</strong></span>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Air Flow Micro-Animation -->
+              <div class="cold-air-convection">
+                <div class="air-particle p1"></div>
+                <div class="air-particle p2"></div>
+                <div class="air-particle p3"></div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+
+        <!-- =====================================================================
+             MODULE 2: MONITORING
+             ===================================================================== -->
+        <section id="page-monitoring" class="page-section" aria-labelledby="monitoring-heading">
+          <div class="section-title-wrap">
+            <div>
+              <h2 id="monitoring-heading" class="section-title">Live Sensor Monitoring</h2>
+              <p class="section-desc">Real-time hardware telemetry streams directly from ESP32 via USB Serial.</p>
+            </div>
+            <div class="section-actions">
+              <span class="update-rate-pill">Update: ~1.0s</span>
+            </div>
+          </div>
+
+          <!-- FOUR SENSOR CARDS -->
+          <div class="sensor-cards-grid">
+            
+            <!-- Sensor Card 1: Refrigerator Temperature (DS18B20) -->
+            <article class="sensor-card" id="card-tray-temp">
+              <div class="card-header">
+                <div class="card-title-group">
+                  <span class="sensor-badge">DS18B20 PROBE</span>
+                  <h3 class="card-title">Refrigerator Temperature</h3>
+                </div>
+                <div class="card-status-badge status-badge-normal" id="tray-temp-status-badge">Normal</div>
+              </div>
+              <div class="card-body">
+                <div class="metric-block metric-block-hero">
+                  <span class="metric-label">INTERNAL TRAY TEMP</span>
+                  <div class="metric-value-wrap">
+                    <span class="metric-value" id="val-tray-temp">--</span>
+                    <span class="metric-unit">°C</span>
+                  </div>
+                </div>
+              </div>
+              <div class="card-footer">
+                <span class="footer-note" id="tray-temp-footer-note">Thresholds: &lt; 5.0°C Normal | &gt; 8.0°C Critical</span>
+                <span class="sensor-pin-hint">GPIO 16</span>
+              </div>
+            </article>
+
+            <!-- Sensor Card 2: Environment Humidity & Temp (DHT22) -->
+            <article class="sensor-card" id="card-environment">
+              <div class="card-header">
+                <div class="card-title-group">
+                  <span class="sensor-badge">DHT22 SENSOR</span>
+                  <h3 class="card-title">Environment Monitoring</h3>
+                </div>
+                <div class="card-status-badge status-badge-normal" id="env-status-badge">Normal</div>
+              </div>
+              <div class="card-body card-body-dual">
+                <div class="metric-block">
+                  <span class="metric-label">Environment Humidity</span>
+                  <div class="metric-value-wrap">
+                    <span class="metric-value" id="val-env-hum">--</span>
+                    <span class="metric-unit">%</span>
+                  </div>
+                </div>
+                <div class="metric-divider"></div>
+                <div class="metric-block">
+                  <span class="metric-label">Room Temperature</span>
+                  <div class="metric-value-wrap">
+                    <span class="metric-value" id="val-env-temp">--</span>
+                    <span class="metric-unit">°C</span>
+                  </div>
+                </div>
+              </div>
+              <div class="card-footer">
+                <span class="footer-note" id="env-footer-note">Ambient room condition tracking</span>
+                <span class="sensor-pin-hint">GPIO 4</span>
+              </div>
+            </article>
+
+            <!-- Sensor Card 3: Gas / Air Quality (MQ135) -->
+            <article class="sensor-card" id="card-mq135">
+              <div class="card-header">
+                <div class="card-title-group">
+                  <span class="sensor-badge">MQ135 GAS SENSOR</span>
+                  <h3 class="card-title">Gas / Air Quality Monitoring</h3>
+                </div>
+                <div class="card-status-badge status-badge-normal" id="gas-status-badge">Normal</div>
+              </div>
+              <div class="card-body card-body-dual">
+                <div class="metric-block">
+                  <span class="metric-label">Raw ADC (12-bit)</span>
+                  <div class="metric-value-wrap">
+                    <span class="metric-value" id="val-mq135-raw">--</span>
+                  </div>
+                </div>
+                <div class="metric-divider"></div>
+                <div class="metric-block">
+                  <span class="metric-label">Calculated Voltage</span>
+                  <div class="metric-value-wrap">
+                    <span class="metric-value" id="val-mq135-voltage">--</span>
+                    <span class="metric-unit">V</span>
+                  </div>
+                </div>
+              </div>
+              <div class="card-footer">
+                <span class="footer-note" id="gas-footer-note">Filtered ADC reading (Safe attenuation: 11dB)</span>
+                <span class="sensor-pin-hint">GPIO 34</span>
+              </div>
+            </article>
+
+            <!-- Sensor Card 4: Tray Weight (5KG Load Cell + HX711) -->
+            <article class="sensor-card" id="card-weight">
+              <div class="card-header">
+                <div class="card-title-group">
+                  <span class="sensor-badge">5KG LOAD CELL + HX711</span>
+                  <h3 class="card-title">Total Tray Weight</h3>
+                </div>
+                <div class="card-status-badge status-badge-normal" id="weight-status-badge">Connected</div>
+              </div>
+              <div class="card-body">
+                <div class="metric-block metric-block-hero">
+                  <span class="metric-label">TRAY WEIGHT (KG)</span>
+                  <div class="metric-value-wrap metric-value-hero">
+                    <span class="metric-value" id="val-tray-weight">--</span>
+                    <span class="metric-unit">KG</span>
+                  </div>
+                </div>
+              </div>
+              <div class="card-footer">
+                <span class="footer-note" id="weight-footer-note">Startup baseline zeroed • Noise: 1500 • Divisor: 12000</span>
+                <span class="sensor-pin-hint">DT: 26 / SCK: 27</span>
+              </div>
+            </article>
+
+          </div>
+
+          <!-- EMERGENCY ALERT SECTION (Preserved & Enhanced) -->
+          <section id="emergency-alert-section" class="alert-section" aria-live="assertive">
+            <div id="alert-panel" class="alert-panel alert-panel-normal">
+              <div class="alert-indicator-col">
+                <div id="alert-icon-box" class="alert-icon-box">
+                  <svg id="alert-icon-normal" class="alert-svg-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/>
+                    <polyline points="22 4 12 14.01 9 11.01"/>
+                  </svg>
+                  <svg id="alert-icon-emergency" class="alert-svg-icon hidden" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+                    <line x1="12" y1="9" x2="12" y2="13"/>
+                    <line x1="12" y1="17" x2="12.01" y2="17"/>
+                  </svg>
+                </div>
+              </div>
+
+              <div class="alert-text-col">
+                <div class="alert-title-row">
+                  <h3 id="alert-title" class="alert-title">SYSTEM STATUS: ALL PARAMETERS NORMAL</h3>
+                  <span id="alert-level-badge" class="alert-level-badge level-normal">NORMAL</span>
+                </div>
+                <p id="alert-description" class="alert-description">
+                  All tray parameters are within acceptable safe ranges. No gas anomalies or temperature deviations detected.
+                </p>
+                <div class="alert-meta-row">
+                  <span id="alert-parameter-detail" class="alert-meta-item">Monitored Sensors: DHT22, DS18B20, MQ135, HX711</span>
+                  <span id="alert-timestamp" class="alert-meta-item">Last Checked: --:--:--</span>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <!-- SENSOR HISTORY GRAPH SECTION -->
+          <section class="chart-section" aria-label="Interactive Sensor History Chart">
+            <div class="chart-card">
+              <div class="chart-header">
+                <div class="chart-title-wrap">
+                  <h3 class="chart-title">Real-Time Sensor Telemetry History</h3>
+                  <p class="chart-subtitle" id="chart-mode-subtitle">Showing Refrigerator Temperature, Humidity & Gas concentration over time</p>
+                </div>
+                
+                <div class="chart-controls">
+                  <!-- Mode Switcher -->
+                  <div class="chart-mode-toggle" role="tablist">
+                    <button id="btn-chart-mode-env" class="chart-toggle-btn active" type="button" role="tab" aria-selected="true">
+                      Environment History
+                    </button>
+                    <button id="btn-chart-mode-weight" class="chart-toggle-btn" type="button" role="tab" aria-selected="false">
+                      Weight History
+                    </button>
+                  </div>
+
+                  <!-- Range Filter -->
+                  <div class="chart-range-group">
+                    <button class="range-btn active" data-range="30">30s</button>
+                    <button class="range-btn" data-range="60">1m</button>
+                    <button class="range-btn" data-range="300">5m</button>
+                    <button class="range-btn" data-range="0">All</button>
+                    <button id="btn-reset-chart" class="range-btn btn-ghost" title="Reset Chart Zoom">Reset</button>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Canvas Chart Area -->
+              <div class="chart-body">
+                <canvas id="telemetry-chart" height="260"></canvas>
+              </div>
+
+              <div class="chart-footer">
+                <div class="chart-legend" id="chart-legend">
+                  <span class="legend-item"><span class="legend-color-box col-temp"></span> Refrigerator Temp (°C)</span>
+                  <span class="legend-item"><span class="legend-color-box col-hum"></span> Humidity (%)</span>
+                  <span class="legend-item"><span class="legend-color-box col-gas"></span> Gas ADC (/100)</span>
+                </div>
+                <div class="chart-meta">
+                  <span id="chart-sample-count">Samples in view: 0</span>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <!-- ESP32 LIVE SERIAL MONITOR (Preserved) -->
+          <section class="console-section" aria-label="ESP32 Live Serial Monitor">
+            <div class="console-card">
+              <div class="console-header">
+                <div class="console-title-group">
+                  <div class="console-led" id="console-led"></div>
+                  <h3 class="console-title">ESP32 LIVE SERIAL MONITOR</h3>
+                  <span class="console-baud-badge">115200 BAUD (USB-CDC)</span>
+                </div>
+
+                <div class="console-actions">
+                  <span class="console-counter" id="packet-counter">Packets: 0</span>
+                  <label class="console-toggle-label" title="Automatically scroll to latest reading">
+                    <input type="checkbox" id="chk-autoscroll" checked>
+                    <span>Auto-Scroll</span>
+                  </label>
+                  <button id="btn-clear-console" class="btn btn-sm btn-ghost" type="button" title="Clear console messages">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="btn-icon-sm">
+                      <polyline points="3 6 5 6 21 6"/>
+                      <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+                    </svg>
+                    <span>Clear</span>
+                  </button>
+                </div>
+              </div>
+
+              <div class="console-body" id="serial-terminal" role="log" aria-live="polite">
+                <div class="terminal-line terminal-system">
+                  <span class="t-time">[00:00:00]</span>
+                  <span class="t-msg">TRAYVANTA Web Dashboard initialized. Click "CONNECT ESP32" or "START DEMO" to view telemetry.</span>
+                </div>
+              </div>
+            </div>
+          </section>
+        </section>
+
+
+        <!-- =====================================================================
+             MODULE 3: PRODUCTS / INVENTORY
+             ===================================================================== -->
+        <section id="page-products" class="page-section" aria-labelledby="products-heading">
+          <div class="section-title-wrap">
+            <div>
+              <h2 id="products-heading" class="section-title">Food Inventory Management</h2>
+              <p class="section-desc">Register food items stored on the tray. Automatically tracked with Cloud Firestore persistence.</p>
+            </div>
+            <div class="section-actions">
+              <button id="btn-open-add-product" class="btn btn-primary" type="button">
+                <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                ADD PRODUCT
+              </button>
+            </div>
+          </div>
+
+          <!-- Product Filter Bar -->
+          <div class="filter-toolbar">
+            <div class="search-box">
+              <svg class="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+              <input type="text" id="input-search-product" placeholder="Search products by name or description..." aria-label="Search products">
+            </div>
+
+            <div class="filter-select-group">
+              <select id="filter-category" class="filter-select" aria-label="Filter by category">
+                <option value="ALL">All Categories</option>
+                <option value="Milk">Milk</option>
+                <option value="Paneer">Paneer</option>
+                <option value="Yogurt">Yogurt</option>
+                <option value="Cheese">Cheese</option>
+                <option value="Vegetables">Vegetables</option>
+                <option value="Fruits">Fruits</option>
+                <option value="Mushrooms">Mushrooms</option>
+                <option value="Batter">Batter</option>
+                <option value="Meat">Meat</option>
+                <option value="Other">Other</option>
+              </select>
+
+              <select id="filter-expiry" class="filter-select" aria-label="Filter by expiration">
+                <option value="ALL">All Expiry Dates</option>
+                <option value="EXPIRED">Already Expired</option>
+                <option value="TODAY">Expiring Today</option>
+                <option value="SOON_2">Within 2 Days</option>
+                <option value="SOON_4">Within 4 Days</option>
+                <option value="SAFE">More than 4 Days</option>
+              </select>
+
+              <select id="filter-risk" class="filter-select" aria-label="Filter by risk status">
+                <option value="ALL">All Risk Statuses</option>
+                <option value="SAFE">SAFE (Green)</option>
+                <option value="INSPECT">INSPECT (Yellow)</option>
+                <option value="SELL FIRST">SELL FIRST (Orange)</option>
+                <option value="REMOVE">REMOVE (Red)</option>
+              </select>
+            </div>
+          </div>
+
+          <!-- Products Table -->
+          <div class="table-card">
+            <div class="table-responsive">
+              <table class="data-table" id="products-table">
+                <thead>
+                  <tr>
+                    <th>Product</th>
+                    <th>Category</th>
+                    <th>Quantity</th>
+                    <th>Weight</th>
+                    <th>Storage Temp</th>
+                    <th>Storage Date</th>
+                    <th>Expiry Date</th>
+                    <th>Rule Status</th>
+                    <th class="text-right">Actions</th>
+                  </tr>
+                </thead>
+                <tbody id="products-table-body">
+                  <!-- Populated by JavaScript -->
+                </tbody>
+              </table>
+            </div>
+
+            <!-- Empty State -->
+            <div id="products-empty-state" class="empty-state hidden">
+              <svg class="empty-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z"/></svg>
+              <h4>No Products Found</h4>
+              <p>No food items match the current search or filter criteria. Add a new product to monitor its preservation.</p>
+              <button class="btn btn-primary btn-sm" id="btn-empty-add-product">Add Product</button>
+            </div>
+          </div>
+        </section>
+
+
+        <!-- =====================================================================
+             MODULE 4: RISK ANALYSIS
+             ===================================================================== -->
+        <section id="page-risk-analysis" class="page-section" aria-labelledby="risk-heading">
+          <div class="section-title-wrap">
+            <div>
+              <h2 id="risk-heading" class="section-title">Rule-Based Food Preservation Risk Analysis</h2>
+              <p class="section-desc">Transparent priority classification combining real-time refrigerator temperature and product shelf-life thresholds.</p>
+            </div>
+            <div class="section-actions">
+              <span class="priority-badge-hint">Strict Priority Order: REMOVE &gt; SELL FIRST &gt; INSPECT &gt; SAFE</span>
+            </div>
+          </div>
+
+          <!-- RISK SUMMARY CARDS (4 Cards) -->
+          <div class="risk-summary-grid">
+            <div class="risk-card risk-card-safe">
+              <div class="risk-card-top">
+                <span class="risk-title">SAFE</span>
+                <span class="risk-icon-pill">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>
+                </span>
+              </div>
+              <div class="risk-count" id="risk-count-safe">0</div>
+              <div class="risk-desc">Optimal cold storage (&le; 5°C) &gt; 4 days to expiry</div>
+            </div>
+
+            <div class="risk-card risk-card-inspect">
+              <div class="risk-card-top">
+                <span class="risk-title">INSPECT</span>
+                <span class="risk-icon-pill">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+                </span>
+              </div>
+              <div class="risk-count" id="risk-count-inspect">0</div>
+              <div class="risk-desc">Temp 5°C - 9°C OR expiry within 4 days</div>
+            </div>
+
+            <div class="risk-card risk-card-sell-first">
+              <div class="risk-card-top">
+                <span class="risk-title">SELL FIRST</span>
+                <span class="risk-icon-pill">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                </span>
+              </div>
+              <div class="risk-count" id="risk-count-sell-first">0</div>
+              <div class="risk-desc">Expiry is today or within the next 2 days</div>
+            </div>
+
+            <div class="risk-card risk-card-remove">
+              <div class="risk-card-top">
+                <span class="risk-title">REMOVE</span>
+                <span class="risk-icon-pill">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                </span>
+              </div>
+              <div class="risk-count" id="risk-count-remove">0</div>
+              <div class="risk-desc">Date expired OR critical temp reached (&ge; 9°C)</div>
+            </div>
+          </div>
+
+          <!-- PRODUCT RISK CLASSIFICATION TABLE -->
+          <div class="table-card">
+            <div class="table-header-row">
+              <h3 class="table-title">Product Classification Matrix</h3>
+              <span class="table-subtitle">Evaluated continuously against current refrigerator temperature (<strong id="risk-current-temp-badge">-- °C</strong>)</span>
+            </div>
+            <div class="table-responsive">
+              <table class="data-table" id="risk-matrix-table">
+                <thead>
+                  <tr>
+                    <th>Product</th>
+                    <th>Category</th>
+                    <th>Expiry Date</th>
+                    <th>Days Left</th>
+                    <th>Storage Temp</th>
+                    <th>Classification</th>
+                    <th>Triggered Rule</th>
+                    <th>Explanation & Recommendation</th>
+                  </tr>
+                </thead>
+                <tbody id="risk-table-body">
+                  <!-- Populated by JavaScript -->
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <!-- TRANSPARENT DEMONSTRATION RULE SET PANEL -->
+          <div class="rules-panel-card">
+            <div class="rules-panel-header">
+              <div class="rules-title-group">
+                <svg class="rules-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
+                <div>
+                  <h3 class="rules-heading">Transparent Demonstration Rule Set</h3>
+                  <p class="rules-subheading">Deterministic multi-factor risk logic. No black-box machine learning models.</p>
+                </div>
+              </div>
+              <span class="rules-tag">DEMO LOGIC SPECIFICATION</span>
+            </div>
+
+            <div class="rules-grid">
+              <!-- Rule 1: REMOVE -->
+              <div class="rule-card rule-card-remove">
+                <div class="rule-header">
+                  <span class="rule-num">RULE 1 (HIGHEST PRIORITY)</span>
+                  <span class="rule-badge badge-remove">REMOVE</span>
+                </div>
+                <div class="rule-condition">
+                  <strong>Trigger Condition:</strong>
+                  <code>Expiry date in past &nbsp;OR&nbsp; Tray Temperature &ge; 9.0°C</code>
+                </div>
+                <p class="rule-explanation">
+                  Product has reached or exceeded its expiration date, or the refrigerator has warmed to an unsafe threshold where rapid microbial growth occurs.
+                </p>
+                <div class="rule-action"><strong>Action:</strong> Discard item immediately to prevent cross-contamination.</div>
+              </div>
+
+              <!-- Rule 2: SELL FIRST -->
+              <div class="rule-card rule-card-sell-first">
+                <div class="rule-header">
+                  <span class="rule-num">RULE 2 (HIGH PRIORITY)</span>
+                  <span class="rule-badge badge-sell-first">SELL FIRST</span>
+                </div>
+                <div class="rule-condition">
+                  <strong>Trigger Condition:</strong>
+                  <code>Expiry date is today &nbsp;OR&nbsp; Expiry within next 2 calendar days</code>
+                </div>
+                <p class="rule-explanation">
+                  Applied only when Rule 1 conditions do not apply. Product remains safe under current cooling but shelf life is immediately ending.
+                </p>
+                <div class="rule-action"><strong>Action:</strong> Mark down, prioritize for immediate consumption, or place on front counter.</div>
+              </div>
+
+              <!-- Rule 3: INSPECT -->
+              <div class="rule-card rule-card-inspect">
+                <div class="rule-header">
+                  <span class="rule-num">RULE 3 (MODERATE PRIORITY)</span>
+                  <span class="rule-badge badge-inspect">INSPECT</span>
+                </div>
+                <div class="rule-condition">
+                  <strong>Trigger Condition:</strong>
+                  <code>Tray Temp &gt; 5.0°C and &lt; 9.0°C &nbsp;OR&nbsp; Expiry within next 4 calendar days</code>
+                </div>
+                <p class="rule-explanation">
+                  Applied when higher priority rules do not apply. Temperature is above optimal 5.0°C preservation limit or product shelf life is moderately approaching.
+                </p>
+                <div class="rule-action"><strong>Action:</strong> Inspect package integrity, verify chiller cooling seals, and monitor status.</div>
+              </div>
+
+              <!-- Rule 4: SAFE -->
+              <div class="rule-card rule-card-safe">
+                <div class="rule-header">
+                  <span class="rule-num">RULE 4 (DEFAULT)</span>
+                  <span class="rule-badge badge-safe">SAFE</span>
+                </div>
+                <div class="rule-condition">
+                  <strong>Trigger Condition:</strong>
+                  <code>Tray Temp &le; 5.0°C &nbsp;AND&nbsp; Product Expiry &gt; 4 calendar days</code>
+                </div>
+                <p class="rule-explanation">
+                  Cold chain is strictly preserved and product is well within manufacturer longevity guidelines.
+                </p>
+                <div class="rule-action"><strong>Action:</strong> Maintain standard chilled storage.</div>
+              </div>
+            </div>
+
+            <!-- Disclaimer Banner -->
+            <div class="rule-disclaimer-callout">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="disclaimer-icon"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
+              <div class="disclaimer-content">
+                <strong>Important Demonstration Notice:</strong>
+                <span>These classification rules are configurable software thresholds designed for system integration demonstration and do not constitute certified laboratory food-safety guarantees. Atmospheric MQ135 gas readings generate separate environmental alerts and do not independently alter product risk status.</span>
+              </div>
+            </div>
+          </div>
+        </section>
+
+
+        <!-- =====================================================================
+             MODULE 5: HISTORY & EXPORT
+             ===================================================================== -->
+        <section id="page-history" class="page-section" aria-labelledby="history-heading">
+          <div class="section-title-wrap">
+            <div>
+              <h2 id="history-heading" class="section-title">Telemetry History & Export</h2>
+              <p class="section-desc">Historical sensor snapshots saved periodically (every 10s or state transition) with Firebase Cloud Firestore backing.</p>
+            </div>
+            <div class="section-actions">
+              <button id="btn-export-csv" class="btn btn-primary" type="button">
+                <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                EXPORT CSV
+              </button>
+              <button id="btn-refresh-history" class="btn btn-secondary" type="button">
+                <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+                REFRESH
+              </button>
+            </div>
+          </div>
+
+          <!-- HISTORY SUMMARY CARDS (4 Cards) -->
+          <div class="summary-cards-grid">
+            <div class="summary-card">
+              <div class="summary-card-header">
+                <span class="card-kicker">DATABASE RECORDS</span>
+                <span class="status-chip status-chip-normal" id="hist-chip-count">Active</span>
+              </div>
+              <div class="summary-card-metric">
+                <span class="metric-num" id="hist-total-samples">0</span>
+                <span class="metric-unit">Samples</span>
+              </div>
+              <div class="summary-card-footer">
+                <span class="footer-title">Stored Snapshots</span>
+                <span class="footer-sub">Firestore Cloud Collection</span>
+              </div>
+            </div>
+
+            <div class="summary-card">
+              <div class="summary-card-header">
+                <span class="card-kicker">TIMESTAMP</span>
+                <span class="status-chip status-chip-normal">Recent</span>
+              </div>
+              <div class="summary-card-metric summary-card-metric-sm">
+                <span class="metric-time-text" id="hist-latest-timestamp">--:--:--</span>
+              </div>
+              <div class="summary-card-footer">
+                <span class="footer-title">Latest Recorded Telemetry</span>
+                <span class="footer-sub" id="hist-latest-date">Awaiting live packet</span>
+              </div>
+            </div>
+
+            <div class="summary-card">
+              <div class="summary-card-header">
+                <span class="card-kicker">INCIDENT LOGS</span>
+                <span class="status-chip status-chip-warning" id="hist-chip-warnings">Monitored</span>
+              </div>
+              <div class="summary-card-metric">
+                <span class="metric-num" id="hist-warnings-count">0</span>
+                <span class="metric-unit">Warnings</span>
+              </div>
+              <div class="summary-card-footer">
+                <span class="footer-title">Elevated States Recorded</span>
+                <span class="footer-sub">Temp & Gas Threshold Events</span>
+              </div>
+            </div>
+
+            <div class="summary-card">
+              <div class="summary-card-header">
+                <span class="card-kicker">ACTIVE SOURCE</span>
+                <span class="status-chip status-chip-normal" id="hist-chip-source">LIVE</span>
+              </div>
+              <div class="summary-card-metric summary-card-metric-sm">
+                <span class="status-headline" id="hist-active-source-text">LIVE HARDWARE</span>
+              </div>
+              <div class="summary-card-footer">
+                <span class="footer-title">Origin Tagging</span>
+                <span class="footer-sub">No Mixed Records</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- History Filter Toolbar -->
+          <div class="filter-toolbar">
+            <div class="search-box">
+              <svg class="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+              <input type="text" id="input-search-history" placeholder="Filter records by date or status..." aria-label="Search historical records">
+            </div>
+
+            <div class="filter-select-group">
+              <select id="filter-history-source" class="filter-select" aria-label="Filter by data origin">
+                <option value="ALL">All Sources (Live & Simulated)</option>
+                <option value="LIVE">Live Hardware Only</option>
+                <option value="SIMULATED">Simulated Demo Only</option>
+              </select>
+
+              <select id="filter-history-warning" class="filter-select" aria-label="Filter by warning status">
+                <option value="ALL">All Statuses</option>
+                <option value="NORMAL">Normal Telemetry</option>
+                <option value="WARNING">Warnings</option>
+                <option value="CRITICAL">Critical Alarms</option>
+              </select>
+            </div>
+          </div>
+
+          <!-- History Data Table -->
+          <div class="table-card">
+            <div class="table-responsive">
+              <table class="data-table" id="history-table">
+                <thead>
+                  <tr>
+                    <th>Timestamp</th>
+                    <th>Device ID</th>
+                    <th>Tray Temp</th>
+                    <th>Env Humidity</th>
+                    <th>Gas (ADC / V)</th>
+                    <th>Tray Weight</th>
+                    <th>Warning Status</th>
+                    <th>Source</th>
+                  </tr>
+                </thead>
+                <tbody id="history-table-body">
+                  <!-- Populated by JavaScript -->
+                </tbody>
+              </table>
+            </div>
+
+            <div class="table-pagination-footer">
+              <span id="history-showing-label">Showing latest records</span>
+              <button id="btn-load-more-history" class="btn btn-sm btn-secondary">Load Older Snapshots</button>
+            </div>
+          </div>
+        </section>
+
+      </main>
+
+      <!-- Global Footer -->
+      <footer class="app-footer">
+        <div class="footer-content">
+          <p>TRAYVANTA &bull; Smart Refrigeration Digital Twin & Food Inventory Management System &bull; Single-Tray Prototype</p>
+          <p class="footer-meta">ESP32 USB-CDC @ 115200 Baud &bull; Web Serial API &bull; Firebase Cloud Firestore</p>
+        </div>
+      </footer>
+
+    </div>
+  </div>
+
+
+  <!-- =========================================================================
+       MODALS SECTION
+       ========================================================================= -->
+
+  <!-- 1. ADD / EDIT PRODUCT MODAL -->
+  <div id="product-modal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="product-modal-title">
+    <div class="modal-box modal-box-lg">
+      <div class="modal-header">
+        <h3 id="product-modal-title" class="modal-title">Register Food Product</h3>
+        <button id="btn-close-product-modal" class="btn-icon-only modal-close-btn" type="button" aria-label="Close product modal">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+      </div>
+
+      <form id="product-form" class="modal-form">
+        <input type="hidden" id="input-product-id">
+
+        <div class="form-row form-row-2">
+          <div class="form-group">
+            <label for="input-product-name">Product Name *</label>
+            <input type="text" id="input-product-name" required placeholder="e.g., Farm Fresh Paneer">
+          </div>
+          <div class="form-group">
+            <label for="input-product-category">Category *</label>
+            <select id="input-product-category" required>
+              <option value="">Select category...</option>
+              <option value="Milk">Milk</option>
+              <option value="Paneer">Paneer</option>
+              <option value="Yogurt">Yogurt</option>
+              <option value="Cheese">Cheese</option>
+              <option value="Vegetables">Vegetables</option>
+              <option value="Fruits">Fruits</option>
+              <option value="Mushrooms">Mushrooms</option>
+              <option value="Batter">Batter</option>
+              <option value="Meat">Meat</option>
+              <option value="Other">Other</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="form-row form-row-3">
+          <div class="form-group">
+            <label for="input-product-quantity">Quantity *</label>
+            <input type="number" id="input-product-quantity" min="1" step="1" value="1" required>
+          </div>
+          <div class="form-group">
+            <label for="input-product-unit">Unit *</label>
+            <input type="text" id="input-product-unit" required placeholder="e.g. packets, litres, kg">
+          </div>
+          <div class="form-group">
+            <label for="input-product-weight">Weight (KG) *</label>
+            <input type="number" id="input-product-weight" min="0.01" step="0.01" value="0.50" required>
+          </div>
+        </div>
+
+        <div class="form-row form-row-3">
+          <div class="form-group">
+            <label for="input-product-temp">Storage Temp (°C) *</label>
+            <input type="number" id="input-product-temp" step="0.1" value="4.0" required>
+          </div>
+          <div class="form-group">
+            <label for="input-product-storage-date">Storage Date *</label>
+            <input type="date" id="input-product-storage-date" required>
+          </div>
+          <div class="form-group">
+            <label for="input-product-expiry-date">Expiry Date *</label>
+            <input type="date" id="input-product-expiry-date" required>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label for="input-product-description">Description / Notes (Optional)</label>
+          <input type="text" id="input-product-description" placeholder="e.g., Unopened sealed container on front shelf">
+        </div>
+
+        <div class="modal-actions">
+          <button type="button" id="btn-cancel-product" class="btn btn-secondary">Cancel</button>
+          <button type="submit" id="btn-save-product" class="btn btn-primary">Save Product</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+
+  <!-- 2. PRODUCT DETAILS VIEW MODAL -->
+  <div id="product-view-modal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="view-modal-title">
+    <div class="modal-box">
+      <div class="modal-header">
+        <h3 id="view-modal-title" class="modal-title">Product Details</h3>
+        <button id="btn-close-view-modal" class="btn-icon-only modal-close-btn" type="button" aria-label="Close product details">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+      </div>
+
+      <div class="modal-view-body" id="product-view-content">
+        <!-- Rendered by JS -->
+      </div>
+
+      <div class="modal-actions">
+        <button type="button" id="btn-view-edit" class="btn btn-secondary">Edit Product</button>
+        <button type="button" id="btn-close-view" class="btn btn-primary">Close</button>
+      </div>
+    </div>
+  </div>
+
+
+  <!-- 3. CONFIGURABLE THRESHOLDS & SYSTEM SETTINGS MODAL (Preserved & Enhanced) -->
   <div id="settings-modal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="modal-title">
     <div class="modal-box">
       <div class="modal-header">
-        <h3 id="modal-title" class="modal-title">Configurable Alert Thresholds</h3>
+        <h3 id="modal-title" class="modal-title">Configurable Alert & Storage Settings</h3>
         <button id="btn-close-modal" class="btn-icon-only modal-close-btn" type="button" aria-label="Close Settings">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <line x1="18" y1="6" x2="6" y2="18"/>
@@ -296,13 +1192,13 @@
         <div class="form-group">
           <label for="input-temp-warning">Tray Temperature Warning (°C)</label>
           <input type="number" id="input-temp-warning" step="0.1" value="5.0" required>
-          <span class="input-hint">Temperatures above this generate an orange warning status.</span>
+          <span class="input-hint">Temperatures above this generate an INSPECT risk warning.</span>
         </div>
 
         <div class="form-group">
           <label for="input-temp-critical">Tray Temperature Critical (°C)</label>
           <input type="number" id="input-temp-critical" step="0.1" value="8.0" required>
-          <span class="input-hint">Temperatures above this trigger a critical refrigerator alert.</span>
+          <span class="input-hint">Temperatures reaching 9.0°C or above trigger a REMOVE risk status.</span>
         </div>
 
         <div class="form-group">
@@ -314,21 +1210,24 @@
         <div class="form-group">
           <label for="input-mq135-critical">MQ135 Gas Critical (Raw ADC)</label>
           <input type="number" id="input-mq135-critical" step="10" value="2200" required>
-          <span class="input-hint">Gas ADC above this triggers "Possible Food Spoilage / Gas Anomaly Detected".</span>
+          <span class="input-hint">Gas ADC above this triggers atmospheric anomaly alert.</span>
+        </div>
+
+        <div class="form-group">
+          <label for="input-snapshot-interval">Cloud Snapshot Interval (Seconds)</label>
+          <input type="number" id="input-snapshot-interval" step="1" min="3" max="60" value="10" required>
+          <span class="input-hint">Frequency of periodic Firestore sensor snapshots (Default: 10s).</span>
         </div>
 
         <div class="modal-actions">
           <button type="button" id="btn-reset-thresholds" class="btn btn-secondary">Reset to Defaults</button>
-          <button type="submit" class="btn btn-primary">Save Thresholds</button>
+          <button type="submit" class="btn btn-primary">Save Settings</button>
         </div>
       </form>
     </div>
   </div>
 
-  <footer class="app-footer">
-    <p>TRAYVANTA &bull; Intelligent Refrigerator Tray Monitoring System &bull; Single-Tray Prototype</p>
-  </footer>
-
-  <script src="script.js"></script>
+  <!-- Load Main JavaScript as ES Module -->
+  <script type="module" src="script.js"></script>
 </body>
 </html>

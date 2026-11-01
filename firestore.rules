@@ -1,0 +1,79 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Helper functions for validation
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isValidDataSource(source) {
+      return source in ['LIVE', 'SIMULATED'];
+    }
+
+    function isValidAlertSeverity(severity) {
+      return severity in ['NORMAL', 'WARNING', 'CRITICAL'];
+    }
+
+    // 1. SENSOR READINGS COLLECTION
+    // Immutable time-series telemetry records
+    match /sensorReadings/{readingId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated()
+        && request.resource.data.deviceId is string
+        && request.resource.data.deviceId.size() <= 64
+        && isValidDataSource(request.resource.data.source)
+        && (request.resource.data.environmentTemperature == null || request.resource.data.environmentTemperature is number)
+        && (request.resource.data.environmentHumidity == null || request.resource.data.environmentHumidity is number)
+        && (request.resource.data.refrigeratorTemperature == null || request.resource.data.refrigeratorTemperature is number)
+        && (request.resource.data.mq135Raw == null || request.resource.data.mq135Raw is number)
+        && (request.resource.data.mq135Voltage == null || request.resource.data.mq135Voltage is number)
+        && (request.resource.data.trayWeightKg == null || request.resource.data.trayWeightKg is number)
+        && request.resource.data.warningStatus is string;
+      allow update, delete: if false; // Sensor logs cannot be tampered with or deleted
+    }
+
+    // 2. PRODUCTS / INVENTORY COLLECTION
+    match /products/{productId} {
+      allow read: if isAuthenticated();
+      allow create, update: if isAuthenticated()
+        && request.resource.data.name is string
+        && request.resource.data.name.size() > 0
+        && request.resource.data.name.size() <= 100
+        && request.resource.data.category is string
+        && request.resource.data.category.size() <= 50
+        && request.resource.data.quantity is number
+        && request.resource.data.quantity >= 0
+        && request.resource.data.unit is string
+        && request.resource.data.unit.size() <= 30
+        && request.resource.data.weightKg is number
+        && request.resource.data.weightKg >= 0
+        && request.resource.data.storageTemperature is number
+        && request.resource.data.expiryDate is string
+        && request.resource.data.expiryDate.size() <= 30;
+      allow delete: if isAuthenticated();
+    }
+
+    // 3. ALERTS COLLECTION
+    // Immutable log of abnormal environmental or temperature occurrences
+    match /alerts/{alertId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated()
+        && request.resource.data.deviceId is string
+        && request.resource.data.alertType is string
+        && isValidAlertSeverity(request.resource.data.severity)
+        && isValidDataSource(request.resource.data.source);
+      allow update, delete: if false;
+    }
+
+    // 4. APP SETTINGS COLLECTION
+    match /appSettings/{settingDoc} {
+      allow read, write: if isAuthenticated();
+    }
+
+    // Default deny for any unspecified path
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

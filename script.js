@@ -1,75 +1,178 @@
 /**
- * TRAYVANTA - Intelligent Refrigerator Tray Monitoring System
- * Tagline: "Smart Monitoring. Better Food Preservation."
- *
- * Frontend Logic: Web Serial API, Real-Time Sensor Processing,
- * Alert Logic, Dynamic Live Serial Console, and Threshold Management.
+ * TRAYVANTA - Smart Refrigeration Digital Twin & Food Inventory Management System
+ * 
+ * Main Frontend Controller:
+ * - Web Serial API Hardware Telemetry (115200 baud, USB-CDC)
+ * - Firebase Cloud Firestore Persistence & Real-Time Sync
+ * - 5 Dynamic Modules (Digital Twin, Monitoring, Products, Risk Analysis, History & Export)
+ * - Deterministic Rule-Based Food Risk Analysis Engine (REMOVE > SELL FIRST > INSPECT > SAFE)
+ * - Periodic Cloud Snapshot Saving (10s interval & Warning state transitions)
+ * - High-DPI Interactive Telemetry Canvas Chart
+ * - Comprehensive Demonstration Simulation Mode
+ * - RFC 4180 Compliant Sensor History CSV Exporter
  */
+
+import {
+  initFirebase,
+  onFirebaseStatusChange,
+  saveSensorReading,
+  getHistoricalReadings,
+  subscribeProducts,
+  addProduct,
+  updateProduct,
+  deleteProduct,
+  saveAlert,
+  saveAppSettings
+} from './firebase.js';
 
 // ==========================================
 // 1. CONFIGURATION & STATE
 // ==========================================
 const DEFAULT_THRESHOLDS = {
-  tempWarning: 5.0,    // °C - Above this is Warning
+  tempWarning: 5.0,    // °C - Above this is Warning / INSPECT
   tempCritical: 8.0,   // °C - Above this is Critical
-  mq135Warning: 1600,  // Raw ADC - Above this is Warning
-  mq135Critical: 2200  // Raw ADC - Above this triggers "Possible Food Spoilage / Gas Anomaly"
+  tempRiskRemove: 9.0, // °C - Reaching 9°C triggers REMOVE food risk
+  mq135Warning: 1600,  // Raw ADC
+  mq135Critical: 2200, // Raw ADC
+  snapshotIntervalSec: 10,
+  deviceId: 'TRAYVANTA_ESP32_01'
 };
 
 let thresholds = { ...DEFAULT_THRESHOLDS };
 
-// Web Serial Connection State
+// Active Telemetry State
+let currentTelemetry = {
+  environmentTemperature: null,
+  environmentHumidity: null,
+  refrigeratorTemperature: null,
+  mq135Raw: null,
+  mq135Voltage: null,
+  trayWeightKg: null,
+  warningStatus: 'NORMAL',
+  dataSource: 'LIVE', // 'LIVE' | 'SIMULATED'
+  timestamp: null
+};
+
+// Web Serial Hardware State
 let port = null;
 let reader = null;
 let readableStreamClosed = null;
 let keepReading = false;
 let packetCount = 0;
+let isHardwareConnected = false;
 
-// Alert Persistence Counters (to avoid noise-triggered false alarms)
+// Alert State & Persistence
 let consecutiveGasCritical = 0;
 let consecutiveTempCritical = 0;
-const PERSISTENCE_THRESHOLD = 2; // Requires 2 consecutive readings to trigger emergency alert
-
+const PERSISTENCE_THRESHOLD = 2;
 let lastEmergencyTimestamp = null;
 let currentEmergencyState = 'NORMAL'; // 'NORMAL' | 'WARNING' | 'CRITICAL'
+let previousWarningState = 'NORMAL';
+
+// Simulation / Demo Mode State
+let isDemoMode = false;
+let demoTimer = null;
+let demoTickCount = 0;
+let demoBaseTemp = 3.6;
+let demoBaseHum = 68.0;
+let demoBaseGas = 1050;
+let demoBaseWeight = 2.85;
+
+// Inventory & Products State
+let productsList = [];
+let editingProductId = null;
+
+// History & Snapshot State
+let snapshotTimer = null;
+let historyBuffer = [];
+let chartHistoryPoints = []; // Recent telemetry points for chart
+
+// Active Navigation
+let activePage = 'digital-twin';
+
+// Chart View Mode
+let chartMode = 'env'; // 'env' | 'weight'
+let chartRangeSeconds = 30; // 30s, 60s, 300s, 0 (all)
 
 // ==========================================
-// 2. DOM ELEMENT REFERENCES
+// 2. DOM REFERENCES
 // ==========================================
-const el = {
-  // Banners & Header
+const dom = {
+  // Navigation & Shell
+  sidebar: document.getElementById('app-sidebar'),
+  sidebarBackdrop: document.getElementById('sidebar-backdrop'),
+  btnSidebarToggle: document.getElementById('btn-sidebar-toggle'),
+  btnSidebarClose: document.getElementById('btn-sidebar-close'),
+  headerPageTitle: document.getElementById('header-page-title'),
+  navItems: document.querySelectorAll('.nav-item'),
+  pageSections: document.querySelectorAll('.page-section'),
+  btnNavActions: document.querySelectorAll('.btn-nav-action'),
+
+  // Header Status & Controls
   browserWarningBanner: document.getElementById('browser-warning-banner'),
-  statusPill: document.getElementById('connection-status-pill'),
+  dataSourceBadge: document.getElementById('data-source-badge'),
+  dataSourceLabel: document.getElementById('data-source-label'),
+  connectionStatusPill: document.getElementById('connection-status-pill'),
   statusDot: document.getElementById('status-dot'),
   statusLabel: document.getElementById('status-label'),
+  firebaseStatusPill: document.getElementById('firebase-status-pill'),
+  firebaseStatusLabel: document.getElementById('firebase-status-label'),
   btnConnect: document.getElementById('btn-connect'),
   btnConnectLabel: document.getElementById('btn-connect-label'),
   btnDisconnect: document.getElementById('btn-disconnect'),
+  btnDemoMode: document.getElementById('btn-demo-mode'),
+  btnDemoLabel: document.getElementById('btn-demo-label'),
   btnSettings: document.getElementById('btn-settings'),
 
-  // Sensor Card 1 (Environment - DHT22)
+  // Simulation Banner
+  simulationBanner: document.getElementById('simulation-banner'),
+  btnSimTempRise: document.getElementById('btn-sim-temp-rise'),
+  btnSimReset: document.getElementById('btn-sim-reset'),
+  btnSimStop: document.getElementById('btn-sim-stop'),
+
+  // Sidebar Mini Telemetry
+  miniTrayStatus: document.getElementById('mini-tray-status'),
+  miniTrayTemp: document.getElementById('mini-tray-temp'),
+  miniTrayWeight: document.getElementById('mini-tray-weight'),
+  trayItemCountBadge: document.getElementById('tray-item-count-badge'),
+  inventoryTotalBadge: document.getElementById('inventory-total-badge'),
+  navRiskSummaryPill: document.getElementById('nav-risk-summary-pill'),
+
+  // Module 1: Digital Twin
+  twinValTemp: document.getElementById('twin-val-temp'),
+  twinStatusTemp: document.getElementById('twin-status-temp'),
+  twinValHum: document.getElementById('twin-val-hum'),
+  twinStatusHum: document.getElementById('twin-status-hum'),
+  twinValWeight: document.getElementById('twin-val-weight'),
+  twinStatusWeight: document.getElementById('twin-status-weight'),
+  twinOverallTitle: document.getElementById('twin-overall-title'),
+  twinOverallChip: document.getElementById('twin-overall-chip'),
+  twinMq135Sub: document.getElementById('twin-mq135-sub'),
+  twinTraySurface: document.getElementById('twin-tray-surface'),
+  twinTrayGaugeFill: document.getElementById('twin-tray-gauge-fill'),
+  twinTrayGaugeText: document.getElementById('twin-tray-gauge-text'),
+  refrigeratorAmbientGlow: document.getElementById('refrigerator-ambient-glow'),
+  acrylicTemp: document.getElementById('acrylic-temp'),
+  acrylicHum: document.getElementById('acrylic-hum'),
+  acrylicWeight: document.getElementById('acrylic-weight'),
+
+  // Module 2: Monitoring Cards
+  valTrayTemp: document.getElementById('val-tray-temp'),
+  trayTempStatusBadge: document.getElementById('tray-temp-status-badge'),
+  trayTempFooterNote: document.getElementById('tray-temp-footer-note'),
   valEnvTemp: document.getElementById('val-env-temp'),
   valEnvHum: document.getElementById('val-env-hum'),
   envStatusBadge: document.getElementById('env-status-badge'),
   envFooterNote: document.getElementById('env-footer-note'),
-
-  // Sensor Card 2 (Tray Temperature - DS18B20)
-  valTrayTemp: document.getElementById('val-tray-temp'),
-  trayTempStatusBadge: document.getElementById('tray-temp-status-badge'),
-  trayTempFooterNote: document.getElementById('tray-temp-footer-note'),
-
-  // Sensor Card 3 (Gas Quality - MQ135)
   valMq135Raw: document.getElementById('val-mq135-raw'),
   valMq135Voltage: document.getElementById('val-mq135-voltage'),
   gasStatusBadge: document.getElementById('gas-status-badge'),
   gasFooterNote: document.getElementById('gas-footer-note'),
-
-  // Sensor Card 4 (Tray Weight - 5KG Load Cell + HX711)
   valTrayWeight: document.getElementById('val-tray-weight'),
   weightStatusBadge: document.getElementById('weight-status-badge'),
   weightFooterNote: document.getElementById('weight-footer-note'),
 
-  // Emergency Alert Section
+  // Emergency Alert
   alertPanel: document.getElementById('alert-panel'),
   alertIconNormal: document.getElementById('alert-icon-normal'),
   alertIconEmergency: document.getElementById('alert-icon-emergency'),
@@ -79,14 +182,79 @@ const el = {
   alertParameterDetail: document.getElementById('alert-parameter-detail'),
   alertTimestamp: document.getElementById('alert-timestamp'),
 
-  // Live Serial Monitor
+  // Chart
+  chartSubtitle: document.getElementById('chart-mode-subtitle'),
+  btnChartModeEnv: document.getElementById('btn-chart-mode-env'),
+  btnChartModeWeight: document.getElementById('btn-chart-mode-weight'),
+  chartRangeBtns: document.querySelectorAll('.range-btn[data-range]'),
+  btnResetChart: document.getElementById('btn-reset-chart'),
+  telemetryCanvas: document.getElementById('telemetry-chart'),
+  chartLegend: document.getElementById('chart-legend'),
+  chartSampleCount: document.getElementById('chart-sample-count'),
+
+  // Live Serial Terminal
   serialTerminal: document.getElementById('serial-terminal'),
   consoleLed: document.getElementById('console-led'),
   packetCounter: document.getElementById('packet-counter'),
   chkAutoscroll: document.getElementById('chk-autoscroll'),
   btnClearConsole: document.getElementById('btn-clear-console'),
 
-  // Settings Modal
+  // Module 3: Products
+  btnOpenAddProduct: document.getElementById('btn-open-add-product'),
+  btnEmptyAddProduct: document.getElementById('btn-empty-add-product'),
+  inputSearchProduct: document.getElementById('input-search-product'),
+  filterCategory: document.getElementById('filter-category'),
+  filterExpiry: document.getElementById('filter-expiry'),
+  filterRisk: document.getElementById('filter-risk'),
+  productsTableBody: document.getElementById('products-table-body'),
+  productsEmptyState: document.getElementById('products-empty-state'),
+
+  // Module 4: Risk Analysis
+  riskCountSafe: document.getElementById('risk-count-safe'),
+  riskCountInspect: document.getElementById('risk-count-inspect'),
+  riskCountSellFirst: document.getElementById('risk-count-sell-first'),
+  riskCountRemove: document.getElementById('risk-count-remove'),
+  riskTableBody: document.getElementById('risk-table-body'),
+  riskCurrentTempBadge: document.getElementById('risk-current-temp-badge'),
+
+  // Module 5: History
+  histTotalSamples: document.getElementById('hist-total-samples'),
+  histLatestTimestamp: document.getElementById('hist-latest-timestamp'),
+  histLatestDate: document.getElementById('hist-latest-date'),
+  histWarningsCount: document.getElementById('hist-warnings-count'),
+  histActiveSourceText: document.getElementById('hist-active-source-text'),
+  inputSearchHistory: document.getElementById('input-search-history'),
+  filterHistorySource: document.getElementById('filter-history-source'),
+  filterHistoryWarning: document.getElementById('filter-history-warning'),
+  historyTableBody: document.getElementById('history-table-body'),
+  btnExportCsv: document.getElementById('btn-export-csv'),
+  btnRefreshHistory: document.getElementById('btn-refresh-history'),
+  btnLoadMoreHistory: document.getElementById('btn-load-more-history'),
+  historyShowingLabel: document.getElementById('history-showing-label'),
+
+  // Modals
+  productModal: document.getElementById('product-modal'),
+  productModalTitle: document.getElementById('product-modal-title'),
+  productForm: document.getElementById('product-form'),
+  inputProductId: document.getElementById('input-product-id'),
+  inputProductName: document.getElementById('input-product-name'),
+  inputProductCategory: document.getElementById('input-product-category'),
+  inputProductQuantity: document.getElementById('input-product-quantity'),
+  inputProductUnit: document.getElementById('input-product-unit'),
+  inputProductWeight: document.getElementById('input-product-weight'),
+  inputProductTemp: document.getElementById('input-product-temp'),
+  inputProductStorageDate: document.getElementById('input-product-storage-date'),
+  inputProductExpiryDate: document.getElementById('input-product-expiry-date'),
+  inputProductDescription: document.getElementById('input-product-description'),
+  btnCloseProductModal: document.getElementById('btn-close-product-modal'),
+  btnCancelProduct: document.getElementById('btn-cancel-product'),
+
+  productViewModal: document.getElementById('product-view-modal'),
+  productViewContent: document.getElementById('product-view-content'),
+  btnCloseViewModal: document.getElementById('btn-close-view-modal'),
+  btnCloseView: document.getElementById('btn-close-view'),
+  btnViewEdit: document.getElementById('btn-view-edit'),
+
   settingsModal: document.getElementById('settings-modal'),
   btnCloseModal: document.getElementById('btn-close-modal'),
   settingsForm: document.getElementById('settings-form'),
@@ -94,149 +262,314 @@ const el = {
   inputTempCritical: document.getElementById('input-temp-critical'),
   inputMq135Warning: document.getElementById('input-mq135-warning'),
   inputMq135Critical: document.getElementById('input-mq135-critical'),
+  inputSnapshotInterval: document.getElementById('input-snapshot-interval'),
   btnResetThresholds: document.getElementById('btn-reset-thresholds')
 };
 
 // ==========================================
-// 3. INITIALIZATION & STORAGE
+// 3. INITIALIZATION & SETUP
 // ==========================================
-document.addEventListener('DOMContentLoaded', () => {
-  loadSavedThresholds();
-  updateThresholdHints();
-  checkWebSerialSupport();
+document.addEventListener('DOMContentLoaded', async () => {
+  loadSavedSettings();
+  setupNavigation();
   setupEventListeners();
-  resetDashboardReadings();
+  checkWebSerialSupport();
+  resetTelemetryState();
+
+  // Initialize Canvas Chart
+  initCanvasChart();
+
+  // Setup Firebase Cloud Firestore
+  setupFirebaseIntegration();
+
+  // Start Cloud Snapshot Timer
+  startSnapshotScheduler();
 });
 
-function loadSavedThresholds() {
+function loadSavedSettings() {
   try {
-    const saved = localStorage.getItem('trayvanta_thresholds');
+    const saved = localStorage.getItem('trayvanta_settings');
     if (saved) {
       thresholds = { ...DEFAULT_THRESHOLDS, ...JSON.parse(saved) };
     }
   } catch (e) {
     console.warn('Could not load thresholds from localStorage:', e);
   }
+  updateThresholdDisplayHints();
 }
 
-function saveThresholds() {
+function saveSettings() {
   try {
-    localStorage.setItem('trayvanta_thresholds', JSON.stringify(thresholds));
+    localStorage.setItem('trayvanta_settings', JSON.stringify(thresholds));
+    saveAppSettings(thresholds);
   } catch (e) {
-    console.warn('Could not save thresholds to localStorage:', e);
+    console.warn('Could not save settings:', e);
   }
-  updateThresholdHints();
+  updateThresholdDisplayHints();
 }
 
-function updateThresholdHints() {
-  el.trayTempFooterNote.textContent = `Thresholds: < ${thresholds.tempWarning.toFixed(1)}°C Normal | > ${thresholds.tempCritical.toFixed(1)}°C Critical`;
-  el.gasFooterNote.textContent = `Warning: > ${thresholds.mq135Warning} ADC | Critical: > ${thresholds.mq135Critical} ADC`;
+function updateThresholdDisplayHints() {
+  if (dom.trayTempFooterNote) {
+    dom.trayTempFooterNote.textContent = `Thresholds: < ${thresholds.tempWarning.toFixed(1)}°C Normal | > ${thresholds.tempCritical.toFixed(1)}°C Critical`;
+  }
+  if (dom.gasFooterNote) {
+    dom.gasFooterNote.textContent = `Warning: > ${thresholds.mq135Warning} ADC | Critical: > ${thresholds.mq135Critical} ADC`;
+  }
+}
+
+function setupNavigation() {
+  dom.navItems.forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const pageId = btn.getAttribute('data-page');
+      switchPage(pageId);
+      closeMobileSidebar();
+    });
+  });
+
+  dom.btnNavActions.forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const target = btn.getAttribute('data-target');
+      switchPage(target);
+    });
+  });
+
+  // Mobile sidebar controls
+  if (dom.btnSidebarToggle) {
+    dom.btnSidebarToggle.addEventListener('click', openMobileSidebar);
+  }
+  if (dom.btnSidebarClose) {
+    dom.btnSidebarClose.addEventListener('click', closeMobileSidebar);
+  }
+  if (dom.sidebarBackdrop) {
+    dom.sidebarBackdrop.addEventListener('click', closeMobileSidebar);
+  }
+}
+
+function openMobileSidebar() {
+  dom.sidebar.classList.add('sidebar-open');
+  dom.sidebarBackdrop.classList.remove('hidden');
+}
+
+function closeMobileSidebar() {
+  dom.sidebar.classList.remove('sidebar-open');
+  dom.sidebarBackdrop.classList.add('hidden');
+}
+
+function switchPage(pageId) {
+  activePage = pageId;
+
+  // Update Navigation Active State
+  dom.navItems.forEach((btn) => {
+    if (btn.getAttribute('data-page') === pageId) {
+      btn.classList.add('active');
+    } else {
+      btn.classList.remove('active');
+    }
+  });
+
+  // Update Section Visibility
+  dom.pageSections.forEach((sec) => {
+    if (sec.id === `page-${pageId}`) {
+      sec.classList.add('active');
+    } else {
+      sec.classList.remove('active');
+    }
+  });
+
+  // Update Breadcrumb
+  const titles = {
+    'digital-twin': 'Digital Twin',
+    'monitoring': 'Live Monitoring',
+    'products': 'Inventory & Products',
+    'risk-analysis': 'Risk Analysis',
+    'history': 'History & Export'
+  };
+  dom.headerPageTitle.textContent = titles[pageId] || 'Dashboard';
+
+  // Trigger page-specific refreshes
+  if (pageId === 'risk-analysis') {
+    renderRiskAnalysisModule();
+  } else if (pageId === 'history') {
+    loadHistoricalRecordsView();
+  } else if (pageId === 'digital-twin') {
+    renderDigitalTwinTray();
+  } else if (pageId === 'monitoring') {
+    requestAnimationFrame(renderTelemetryChart);
+  }
 }
 
 // ==========================================
-// 4. WEB SERIAL API HANDLING
+// 4. FIREBASE CLOUD FIRESTORE SETUP
+// ==========================================
+async function setupFirebaseIntegration() {
+  onFirebaseStatusChange((status, message) => {
+    dom.firebaseStatusLabel.textContent = status === 'CONNECTED' ? 'Firestore Active' : (status === 'ERROR' ? 'Cloud: Error' : 'Cloud: Standby');
+    dom.firebaseStatusPill.className = `firebase-status-pill status-${status.toLowerCase()}`;
+    dom.firebaseStatusPill.title = message;
+  });
+
+  await initFirebase();
+
+  // Subscribe to real-time products collection
+  subscribeProducts((products) => {
+    productsList = products || [];
+    updateInventoryCounts();
+    renderProductsTable();
+    renderRiskAnalysisModule();
+    renderDigitalTwinTray();
+  });
+}
+
+function updateInventoryCounts() {
+  const count = productsList.length;
+  if (dom.trayItemCountBadge) dom.trayItemCountBadge.textContent = `${count} Items`;
+  if (dom.inventoryTotalBadge) dom.inventoryTotalBadge.textContent = count;
+}
+
+// ==========================================
+// 5. WEB SERIAL API HARDWARE CONNECTION
 // ==========================================
 function checkWebSerialSupport() {
   if (!('serial' in navigator)) {
-    el.browserWarningBanner.classList.remove('hidden');
-    el.btnConnect.disabled = true;
-    el.btnConnect.title = 'Web Serial API is not supported in this browser.';
-    logTerminal('SYSTEM', 'WARNING: Web Serial API not supported. Please use Google Chrome or Microsoft Edge on a desktop.', 'terminal-warning');
+    dom.browserWarningBanner.classList.remove('hidden');
+    dom.btnConnect.disabled = true;
+    dom.btnConnect.title = 'Web Serial API is not supported in this browser.';
+    logTerminal('SYSTEM', 'Notice: Web Serial API not supported in this browser. Use Google Chrome / Edge on desktop, or run Demo Mode.', 'terminal-warning');
     return false;
   }
   return true;
 }
 
 function setupEventListeners() {
-  el.btnConnect.addEventListener('click', handleConnectESP32);
-  el.btnDisconnect.addEventListener('click', handleDisconnectESP32);
-  el.btnClearConsole.addEventListener('click', () => {
-    el.serialTerminal.innerHTML = '';
+  // Web Serial Connect / Disconnect
+  dom.btnConnect.addEventListener('click', handleConnectESP32);
+  dom.btnDisconnect.addEventListener('click', handleDisconnectESP32);
+  dom.btnClearConsole.addEventListener('click', () => {
+    dom.serialTerminal.innerHTML = '';
     logTerminal('SYSTEM', 'Console cleared.', 'terminal-system');
   });
 
+  // Demo Simulation Mode Buttons
+  dom.btnDemoMode.addEventListener('click', toggleDemoMode);
+  dom.btnSimStop.addEventListener('click', stopDemoMode);
+  dom.btnSimReset.addEventListener('click', resetSimulationValues);
+  dom.btnSimTempRise.addEventListener('click', triggerSimulatedTemperatureRise);
+
+  // Chart Controls
+  dom.btnChartModeEnv.addEventListener('click', () => setChartMode('env'));
+  dom.btnChartModeWeight.addEventListener('click', () => setChartMode('weight'));
+  dom.chartRangeBtns.forEach((btn) => {
+    btn.addEventListener('click', () => {
+      dom.chartRangeBtns.forEach((b) => b.classList.remove('active'));
+      btn.classList.add('active');
+      chartRangeSeconds = parseInt(btn.getAttribute('data-range'), 10);
+      renderTelemetryChart();
+    });
+  });
+  dom.btnResetChart.addEventListener('click', () => {
+    chartHistoryPoints = [];
+    renderTelemetryChart();
+  });
+
+  // Inventory Filters
+  dom.inputSearchProduct.addEventListener('input', renderProductsTable);
+  dom.filterCategory.addEventListener('change', renderProductsTable);
+  dom.filterExpiry.addEventListener('change', renderProductsTable);
+  dom.filterRisk.addEventListener('change', renderProductsTable);
+
+  // Product Add / Edit Modal
+  dom.btnOpenAddProduct.addEventListener('click', () => openProductModal());
+  if (dom.btnEmptyAddProduct) {
+    dom.btnEmptyAddProduct.addEventListener('click', () => openProductModal());
+  }
+  dom.btnCloseProductModal.addEventListener('click', closeProductModal);
+  dom.btnCancelProduct.addEventListener('click', closeProductModal);
+  dom.productModal.addEventListener('click', (e) => {
+    if (e.target === dom.productModal) closeProductModal();
+  });
+  dom.productForm.addEventListener('submit', handleProductFormSubmit);
+
+  // Product View Modal
+  dom.btnCloseViewModal.addEventListener('click', closeProductViewModal);
+  dom.btnCloseView.addEventListener('click', closeProductViewModal);
+  dom.productViewModal.addEventListener('click', (e) => {
+    if (e.target === dom.productViewModal) closeProductViewModal();
+  });
+  dom.btnViewEdit.addEventListener('click', () => {
+    const id = dom.btnViewEdit.getAttribute('data-product-id');
+    closeProductViewModal();
+    if (id) openProductModal(id);
+  });
+
+  // History Controls
+  dom.btnExportCsv.addEventListener('click', exportHistoryToCsv);
+  dom.btnRefreshHistory.addEventListener('click', loadHistoricalRecordsView);
+  dom.btnLoadMoreHistory.addEventListener('click', () => loadHistoricalRecordsView(250));
+  dom.inputSearchHistory.addEventListener('input', renderHistoryTable);
+  dom.filterHistorySource.addEventListener('change', renderHistoryTable);
+  dom.filterHistoryWarning.addEventListener('change', renderHistoryTable);
+
   // Settings Modal Handlers
-  el.btnSettings.addEventListener('click', openSettingsModal);
-  el.btnCloseModal.addEventListener('click', closeSettingsModal);
-  el.settingsModal.addEventListener('click', (e) => {
-    if (e.target === el.settingsModal) closeSettingsModal();
+  dom.btnSettings.addEventListener('click', openSettingsModal);
+  dom.btnCloseModal.addEventListener('click', closeSettingsModal);
+  dom.settingsModal.addEventListener('click', (e) => {
+    if (e.target === dom.settingsModal) closeSettingsModal();
   });
+  dom.settingsForm.addEventListener('submit', handleSettingsFormSubmit);
+  dom.btnResetThresholds.addEventListener('click', handleResetThresholds);
 
+  // Physical Cable Removal Event
+  if ('serial' in navigator) {
+    navigator.serial.addEventListener('disconnect', (event) => {
+      if (port && event.target === port) {
+        logTerminal('SYSTEM', 'ESP32 disconnected: USB cable was physically unplugged.', 'terminal-error');
+        handleDisconnectESP32();
+      }
+    });
+  }
+
+  // Keyboard Shortcuts
   window.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape' && !el.settingsModal.classList.contains('hidden')) {
+    if (e.key === 'Escape') {
+      closeProductModal();
+      closeProductViewModal();
       closeSettingsModal();
+      closeMobileSidebar();
     }
   });
 
-  el.settingsForm.addEventListener('submit', (e) => {
-    e.preventDefault();
-    thresholds.tempWarning = parseFloat(el.inputTempWarning.value) || DEFAULT_THRESHOLDS.tempWarning;
-    thresholds.tempCritical = parseFloat(el.inputTempCritical.value) || DEFAULT_THRESHOLDS.tempCritical;
-    thresholds.mq135Warning = parseInt(el.inputMq135Warning.value, 10) || DEFAULT_THRESHOLDS.mq135Warning;
-    thresholds.mq135Critical = parseInt(el.inputMq135Critical.value, 10) || DEFAULT_THRESHOLDS.mq135Critical;
-    saveThresholds();
-    closeSettingsModal();
-    logTerminal('SYSTEM', 'Alert thresholds updated and saved to local storage.', 'terminal-system');
-  });
-
-  el.btnResetThresholds.addEventListener('click', () => {
-    thresholds = { ...DEFAULT_THRESHOLDS };
-    el.inputTempWarning.value = thresholds.tempWarning;
-    el.inputTempCritical.value = thresholds.tempCritical;
-    el.inputMq135Warning.value = thresholds.mq135Warning;
-    el.inputMq135Critical.value = thresholds.mq135Critical;
-    saveThresholds();
-    closeSettingsModal();
-    logTerminal('SYSTEM', 'Alert thresholds reset to factory defaults.', 'terminal-system');
-  });
-
-  // Native USB Cable Removal Detection
-  navigator.serial.addEventListener('disconnect', (event) => {
-    if (port && event.target === port) {
-      logTerminal('SYSTEM', 'ESP32 disconnected: USB cable was physically unplugged.', 'terminal-error');
-      handleDisconnectESP32();
-    }
+  // Window Resize
+  window.addEventListener('resize', () => {
+    renderTelemetryChart();
   });
 }
 
-function openSettingsModal() {
-  el.inputTempWarning.value = thresholds.tempWarning;
-  el.inputTempCritical.value = thresholds.tempCritical;
-  el.inputMq135Warning.value = thresholds.mq135Warning;
-  el.inputMq135Critical.value = thresholds.mq135Critical;
-  el.settingsModal.classList.remove('hidden');
-}
-
-function closeSettingsModal() {
-  el.settingsModal.classList.add('hidden');
-}
-
-// ==========================================
-// 5. CONNECTION FLOW
-// ==========================================
 async function handleConnectESP32() {
   if (!checkWebSerialSupport()) return;
 
-  setConnectionState('CONNECTING');
-  logTerminal('SYSTEM', 'Requesting serial port... Please select your ESP32 in the browser prompt.', 'terminal-system');
+  // If Demo Mode is running, automatically stop simulation
+  if (isDemoMode) {
+    stopDemoMode();
+    logTerminal('SYSTEM', 'Demo simulation halted to connect physical ESP32 hardware.', 'terminal-system');
+  }
+
+  setConnectionUiState('CONNECTING');
+  logTerminal('SYSTEM', 'Requesting serial port... Please select your ESP32 in the browser picker.', 'terminal-system');
 
   try {
-    // 1. Request port from native browser picker
     port = await navigator.serial.requestPort();
-
-    // 2. Open selected port with configured baud rate
     await port.open({ baudRate: 115200 });
 
-    setConnectionState('CONNECTED');
+    isHardwareConnected = true;
+    setConnectionUiState('CONNECTED');
+    setDataSourceMode('LIVE');
     logTerminal('SYSTEM', 'ESP32 Connected at 115200 baud. Receiving real-time telemetry...', 'terminal-system');
 
-    // 3. Start reading incoming serial line stream
     keepReading = true;
     readSerialStream();
-
   } catch (error) {
     console.error('Serial Connection Error:', error);
-    setConnectionState('DISCONNECTED');
+    setConnectionUiState('DISCONNECTED');
 
     if (error.name === 'NotFoundError') {
       logTerminal('SYSTEM', 'Connection cancelled: No serial port selected.', 'terminal-warning');
@@ -250,6 +583,7 @@ async function handleConnectESP32() {
 
 async function handleDisconnectESP32() {
   keepReading = false;
+  isHardwareConnected = false;
 
   try {
     if (reader) {
@@ -268,33 +602,46 @@ async function handleDisconnectESP32() {
   } catch (error) {
     console.warn('Error during disconnect cleanup:', error);
   } finally {
-    setConnectionState('DISCONNECTED');
-    resetDashboardReadings();
+    setConnectionUiState('DISCONNECTED');
+    resetTelemetryState();
   }
 }
 
-function setConnectionState(state) {
+function setConnectionUiState(state) {
   if (state === 'CONNECTED') {
-    el.statusPill.className = 'status-pill status-connected';
-    el.statusLabel.textContent = 'ESP32 CONNECTED';
-    el.btnConnect.classList.add('hidden');
-    el.btnDisconnect.classList.remove('hidden');
-    el.consoleLed.classList.add('active');
+    dom.connectionStatusPill.className = 'status-pill status-connected';
+    dom.statusLabel.textContent = 'ESP32 CONNECTED';
+    dom.btnConnect.classList.add('hidden');
+    dom.btnDisconnect.classList.remove('hidden');
+    dom.consoleLed.classList.add('active');
   } else if (state === 'CONNECTING') {
-    el.statusPill.className = 'status-pill status-connecting';
-    el.statusLabel.textContent = 'Connecting...';
-    el.btnConnect.disabled = true;
-    el.btnConnectLabel.textContent = 'CONNECTING...';
-    el.btnDisconnect.classList.add('hidden');
-    el.consoleLed.classList.remove('active');
+    dom.connectionStatusPill.className = 'status-pill status-connecting';
+    dom.statusLabel.textContent = 'Connecting...';
+    dom.btnConnect.disabled = true;
+    dom.btnConnectLabel.textContent = 'CONNECTING...';
+    dom.btnDisconnect.classList.add('hidden');
+    dom.consoleLed.classList.remove('active');
   } else {
-    el.statusPill.className = 'status-pill status-disconnected';
-    el.statusLabel.textContent = 'ESP32 Disconnected';
-    el.btnConnect.disabled = false;
-    el.btnConnectLabel.textContent = 'CONNECT ESP32';
-    el.btnConnect.classList.remove('hidden');
-    el.btnDisconnect.classList.add('hidden');
-    el.consoleLed.classList.remove('active');
+    dom.connectionStatusPill.className = 'status-pill status-disconnected';
+    dom.statusLabel.textContent = 'ESP32 Disconnected';
+    dom.btnConnect.disabled = false;
+    dom.btnConnectLabel.textContent = 'CONNECT ESP32';
+    dom.btnConnect.classList.remove('hidden');
+    dom.btnDisconnect.classList.add('hidden');
+    dom.consoleLed.classList.remove('active');
+  }
+}
+
+function setDataSourceMode(source) {
+  currentTelemetry.dataSource = source;
+  if (source === 'LIVE') {
+    dom.dataSourceBadge.className = 'data-mode-badge badge-live';
+    dom.dataSourceLabel.textContent = 'LIVE DATA';
+    dom.histActiveSourceText.textContent = 'LIVE HARDWARE';
+  } else {
+    dom.dataSourceBadge.className = 'data-mode-badge badge-simulated';
+    dom.dataSourceLabel.textContent = 'SIMULATED DATA';
+    dom.histActiveSourceText.textContent = 'SIMULATED DEMO';
   }
 }
 
@@ -311,19 +658,16 @@ async function readSerialStream() {
   try {
     while (keepReading) {
       const { value, done } = await reader.read();
-      if (done) {
-        break;
-      }
+      if (done) break;
       if (value) {
         lineBuffer += value;
         const lines = lineBuffer.split('\n');
-        // Keep trailing incomplete fragment in the buffer
-        lineBuffer = lines.pop();
+        lineBuffer = lines.pop(); // Keep trailing fragment
 
         for (const line of lines) {
           const trimmed = line.trim();
           if (trimmed.length > 0) {
-            processIncomingLine(trimmed);
+            processIncomingSerialLine(trimmed);
           }
         }
       }
@@ -331,7 +675,7 @@ async function readSerialStream() {
   } catch (error) {
     if (keepReading) {
       console.error('Serial read error:', error);
-      logTerminal('SYSTEM', `Serial stream read error: ${error.message}`, 'terminal-error');
+      logTerminal('SYSTEM', `Serial stream error: ${error.message}`, 'terminal-error');
       handleDisconnectESP32();
     }
   } finally {
@@ -341,13 +685,8 @@ async function readSerialStream() {
   }
 }
 
-// ==========================================
-// 7. SENSOR DATA PROCESSING
-// ==========================================
-function processIncomingLine(line) {
-  // Only parse valid JSON objects
+function processIncomingSerialLine(line) {
   if (!line.startsWith('{') || !line.endsWith('}')) {
-    // Non-JSON informational output from device
     logTerminal('DEVICE', line, 'terminal-system');
     return;
   }
@@ -361,133 +700,63 @@ function processIncomingLine(line) {
   }
 
   packetCount++;
-  el.packetCounter.textContent = `Packets: ${packetCount}`;
+  dom.packetCounter.textContent = `Packets: ${packetCount}`;
 
-  // 1. Process Environment Monitoring (DHT22)
-  updateEnvironmentCard(data);
+  // Update Telemetry State from ESP32 JSON payload
+  currentTelemetry.environmentTemperature = data.environment_temperature !== undefined ? data.environment_temperature : null;
+  currentTelemetry.environmentHumidity = data.environment_humidity !== undefined ? data.environment_humidity : null;
+  currentTelemetry.refrigeratorTemperature = data.refrigerator_temperature !== undefined ? data.refrigerator_temperature : null;
+  currentTelemetry.mq135Raw = data.mq135_raw !== undefined ? data.mq135_raw : null;
+  currentTelemetry.mq135Voltage = data.mq135_voltage !== undefined ? data.mq135_voltage : null;
 
-  // 2. Process Refrigerator Tray Temperature (DS18B20)
-  const trayTempStatus = updateTrayTempCard(data);
+  // IMPORTANT: Preserve existing Load Cell demonstration calculation!
+  // Uses weight_kg received directly from ESP32. Does NOT display raw HX711.
+  currentTelemetry.trayWeightKg = data.weight_kg !== undefined ? data.weight_kg : null;
+  currentTelemetry.dataSource = 'LIVE';
+  currentTelemetry.timestamp = new Date().toISOString();
 
-  // 3. Process Gas / Air Quality Monitoring (MQ135)
-  const gasStatus = updateGasCard(data);
+  // Evaluate Emergency Alerts & Warnings
+  evaluateSystemHealthAndAlerts();
 
-  // 4. Process Tray Weight (5KG Load Cell + HX711)
-  updateWeightCard(data);
+  // Update All Visual Modules
+  updateAllDashboardVisuals();
 
-  // 5. Update Emergency Alert State based on evaluated statuses
-  evaluateEmergencyAlert(data, trayTempStatus, gasStatus);
+  // Record point for interactive chart
+  recordTelemetryForChart();
 
-  // 6. Append Clean Structured Information to Live Serial Console
+  // Append formatted entry to Live Serial Terminal
   logFormattedSerialTelemetry(data);
 }
 
-// --- Card 1: Environment (DHT22) ---
-function updateEnvironmentCard(data) {
-  const tempValid = data.environment_temperature !== null && !isNaN(data.environment_temperature);
-  const humValid = data.environment_humidity !== null && !isNaN(data.environment_humidity);
-
-  if (tempValid) {
-    el.valEnvTemp.textContent = Number(data.environment_temperature).toFixed(2);
-  } else {
-    el.valEnvTemp.textContent = '--';
-  }
-
-  if (humValid) {
-    el.valEnvHum.textContent = Number(data.environment_humidity).toFixed(2);
-  } else {
-    el.valEnvHum.textContent = '--';
-  }
-
-  if (tempValid && humValid) {
-    setCardBadge(el.envStatusBadge, 'Normal', 'status-badge-normal');
-  } else {
-    setCardBadge(el.envStatusBadge, 'Sensor Error', 'status-badge-error');
-  }
-}
-
-// --- Card 2: Refrigerator Tray Temperature (DS18B20) ---
-function updateTrayTempCard(data) {
-  const tempValid = data.refrigerator_temperature !== null && !isNaN(data.refrigerator_temperature);
-
-  if (!tempValid) {
-    el.valTrayTemp.textContent = '--';
-    setCardBadge(el.trayTempStatusBadge, 'Disconnected', 'status-badge-error');
-    return 'ERROR';
-  }
-
-  const temp = Number(data.refrigerator_temperature);
-  el.valTrayTemp.textContent = temp.toFixed(2);
-
-  if (temp >= thresholds.tempCritical) {
-    setCardBadge(el.trayTempStatusBadge, 'Critical', 'status-badge-critical');
-    return 'CRITICAL';
-  } else if (temp >= thresholds.tempWarning) {
-    setCardBadge(el.trayTempStatusBadge, 'Warning', 'status-badge-warning');
-    return 'WARNING';
-  } else {
-    setCardBadge(el.trayTempStatusBadge, 'Normal', 'status-badge-normal');
-    return 'NORMAL';
-  }
-}
-
-// --- Card 3: Gas / Air Quality (MQ135) ---
-function updateGasCard(data) {
-  const rawValid = data.mq135_raw !== null && !isNaN(data.mq135_raw);
-  const voltValid = data.mq135_voltage !== null && !isNaN(data.mq135_voltage);
-
-  if (!rawValid) {
-    el.valMq135Raw.textContent = '--';
-    el.valMq135Voltage.textContent = '--';
-    setCardBadge(el.gasStatusBadge, 'Sensor Error', 'status-badge-error');
-    return 'ERROR';
-  }
-
-  const raw = parseInt(data.mq135_raw, 10);
-  const volt = Number(data.mq135_voltage);
-
-  el.valMq135Raw.textContent = raw;
-  el.valMq135Voltage.textContent = voltValid ? volt.toFixed(2) : '--';
-
-  if (raw >= thresholds.mq135Critical) {
-    setCardBadge(el.gasStatusBadge, 'Critical', 'status-badge-critical');
-    return 'CRITICAL';
-  } else if (raw >= thresholds.mq135Warning) {
-    setCardBadge(el.gasStatusBadge, 'Warning', 'status-badge-warning');
-    return 'WARNING';
-  } else {
-    setCardBadge(el.gasStatusBadge, 'Normal', 'status-badge-normal');
-    return 'NORMAL';
-  }
-}
-
-// --- Card 4: Tray Weight (Load Cell + HX711) ---
-function updateWeightCard(data) {
-  const weightValid = data.weight_kg !== null && !isNaN(data.weight_kg);
-
-  if (weightValid) {
-    const weight = Number(data.weight_kg);
-    el.valTrayWeight.textContent = weight.toFixed(2);
-    setCardBadge(el.weightStatusBadge, 'Connected', 'status-badge-normal');
-  } else {
-    el.valTrayWeight.textContent = '--';
-    setCardBadge(el.weightStatusBadge, 'Sensor Error', 'status-badge-error');
-  }
-}
-
-function setCardBadge(badgeElement, text, className) {
-  badgeElement.className = `card-status-badge ${className}`;
-  badgeElement.textContent = text;
-}
-
 // ==========================================
-// 8. EMERGENCY ALERT SYSTEM
+// 7. SYSTEM HEALTH & EMERGENCY ALERTS
 // ==========================================
-function evaluateEmergencyAlert(data, trayTempStatus, gasStatus) {
+function evaluateSystemHealthAndAlerts() {
   const now = new Date();
   const timeStr = now.toLocaleTimeString();
 
-  // Update persistence filters
+  const temp = currentTelemetry.refrigeratorTemperature;
+  const gasRaw = currentTelemetry.mq135Raw;
+
+  let trayTempStatus = 'NORMAL';
+  if (temp === null || isNaN(temp)) {
+    trayTempStatus = 'DISCONNECTED';
+  } else if (temp >= thresholds.tempCritical) {
+    trayTempStatus = 'CRITICAL';
+  } else if (temp >= thresholds.tempWarning) {
+    trayTempStatus = 'WARNING';
+  }
+
+  let gasStatus = 'NORMAL';
+  if (gasRaw === null || isNaN(gasRaw)) {
+    gasStatus = 'DISCONNECTED';
+  } else if (gasRaw >= thresholds.mq135Critical) {
+    gasStatus = 'CRITICAL';
+  } else if (gasRaw >= thresholds.mq135Warning) {
+    gasStatus = 'WARNING';
+  }
+
+  // Update persistence counters to prevent false alarms
   if (gasStatus === 'CRITICAL') {
     consecutiveGasCritical++;
   } else {
@@ -500,129 +769,1257 @@ function evaluateEmergencyAlert(data, trayTempStatus, gasStatus) {
     consecutiveTempCritical = Math.max(0, consecutiveTempCritical - 1);
   }
 
-  // Check for Critical Gas Anomaly (Highest priority: Possible food spoilage)
+  // Determine Overall State
+  let nextState = 'NORMAL';
+
   if (consecutiveGasCritical >= PERSISTENCE_THRESHOLD) {
+    nextState = 'CRITICAL';
     currentEmergencyState = 'CRITICAL';
     lastEmergencyTimestamp = timeStr;
 
-    el.alertPanel.className = 'alert-panel alert-panel-critical';
-    el.alertIconNormal.classList.add('hidden');
-    el.alertIconEmergency.classList.remove('hidden');
+    dom.alertPanel.className = 'alert-panel alert-panel-critical';
+    dom.alertIconNormal.classList.add('hidden');
+    dom.alertIconEmergency.classList.remove('hidden');
+    dom.alertTitle.textContent = '⚠ POSSIBLE FOOD SPOILAGE / GAS ANOMALY ALERT';
+    dom.alertLevelBadge.className = 'alert-level-badge level-critical';
+    dom.alertLevelBadge.textContent = 'CRITICAL ANOMALY';
+    dom.alertDescription.textContent =
+      'MQ135 air-quality sensor detected elevated atmospheric variation exceeding safe critical threshold. Physical tray inspection recommended.';
+    dom.alertParameterDetail.textContent =
+      `Parameter: MQ135 Gas | Current ADC: ${gasRaw} (${Number(currentTelemetry.mq135Voltage || 0).toFixed(2)} V) | Critical Threshold: > ${thresholds.mq135Critical}`;
+    dom.alertTimestamp.textContent = `Alert Triggered: ${timeStr}`;
 
-    el.alertTitle.textContent = '⚠ POSSIBLE FOOD SPOILAGE ALERT';
-    el.alertLevelBadge.className = 'alert-level-badge level-critical';
-    el.alertLevelBadge.textContent = 'CRITICAL ANOMALY';
-
-    el.alertDescription.textContent =
-      'Possible Food Spoilage / Gas Anomaly Detected: MQ135 sensor detected elevated air-quality variation exceeding safe critical threshold. Recommend physical tray inspection.';
-
-    el.alertParameterDetail.textContent =
-      `Parameter: MQ135 Gas | Current ADC: ${data.mq135_raw} (${Number(data.mq135_voltage || 0).toFixed(2)} V) | Critical Threshold: > ${thresholds.mq135Critical}`;
-    el.alertTimestamp.textContent = `Alert Triggered: ${timeStr}`;
-    return;
-  }
-
-  // Check for Critical Refrigerator Temperature
-  if (consecutiveTempCritical >= PERSISTENCE_THRESHOLD) {
+  } else if (consecutiveTempCritical >= PERSISTENCE_THRESHOLD) {
+    nextState = 'CRITICAL';
     currentEmergencyState = 'CRITICAL';
     lastEmergencyTimestamp = timeStr;
 
-    el.alertPanel.className = 'alert-panel alert-panel-critical';
-    el.alertIconNormal.classList.add('hidden');
-    el.alertIconEmergency.classList.remove('hidden');
+    dom.alertPanel.className = 'alert-panel alert-panel-critical';
+    dom.alertIconNormal.classList.add('hidden');
+    dom.alertIconEmergency.classList.remove('hidden');
+    dom.alertTitle.textContent = '⚠ REFRIGERATOR TEMPERATURE ALERT';
+    dom.alertLevelBadge.className = 'alert-level-badge level-critical';
+    dom.alertLevelBadge.textContent = 'CRITICAL TEMP';
+    dom.alertDescription.textContent =
+      'Internal tray temperature exceeded critical threshold. Prolonged elevated temperature accelerates spoilage.';
+    dom.alertParameterDetail.textContent =
+      `Parameter: Tray Temp | Current: ${Number(temp).toFixed(2)} °C | Critical Threshold: > ${thresholds.tempCritical.toFixed(1)} °C`;
+    dom.alertTimestamp.textContent = `Alert Triggered: ${timeStr}`;
 
-    el.alertTitle.textContent = '⚠ REFRIGERATOR TEMPERATURE ALERT';
-    el.alertLevelBadge.className = 'alert-level-badge level-critical';
-    el.alertLevelBadge.textContent = 'CRITICAL TEMP';
-
-    el.alertDescription.textContent =
-      'Refrigerator Tray Temperature Alert: Internal tray temperature exceeded preservation limit. High temperature reduces shelf life and risks spoilage.';
-
-    el.alertParameterDetail.textContent =
-      `Parameter: Tray Temperature | Current: ${Number(data.refrigerator_temperature).toFixed(2)} °C | Critical Threshold: > ${thresholds.tempCritical.toFixed(1)} °C`;
-    el.alertTimestamp.textContent = `Alert Triggered: ${timeStr}`;
-    return;
-  }
-
-  // Check for Warning Levels
-  if (gasStatus === 'WARNING' || trayTempStatus === 'WARNING') {
+  } else if (gasStatus === 'WARNING' || trayTempStatus === 'WARNING') {
+    nextState = 'WARNING';
     currentEmergencyState = 'WARNING';
-    el.alertPanel.className = 'alert-panel alert-panel-warning';
-    el.alertIconNormal.classList.add('hidden');
-    el.alertIconEmergency.classList.remove('hidden');
 
-    el.alertTitle.textContent = 'SYSTEM WARNING: ELEVATED READINGS';
-    el.alertLevelBadge.className = 'alert-level-badge level-warning';
-    el.alertLevelBadge.textContent = 'WARNING';
+    dom.alertPanel.className = 'alert-panel alert-panel-warning';
+    dom.alertIconNormal.classList.add('hidden');
+    dom.alertIconEmergency.classList.remove('hidden');
+    dom.alertTitle.textContent = 'SYSTEM WARNING: ELEVATED READINGS';
+    dom.alertLevelBadge.className = 'alert-level-badge level-warning';
+    dom.alertLevelBadge.textContent = 'WARNING';
 
     if (gasStatus === 'WARNING') {
-      el.alertDescription.textContent =
-        'Notice: Gas/air-quality sensor reading is moderately elevated above normal baseline.';
-      el.alertParameterDetail.textContent =
-        `Parameter: MQ135 Gas | Current ADC: ${data.mq135_raw} | Warning Threshold: > ${thresholds.mq135Warning}`;
+      dom.alertDescription.textContent =
+        'Notice: Gas/air-quality sensor reading is moderately elevated above baseline.';
+      dom.alertParameterDetail.textContent =
+        `Parameter: MQ135 Gas | Current ADC: ${gasRaw} | Warning Threshold: > ${thresholds.mq135Warning}`;
     } else {
-      el.alertDescription.textContent =
+      dom.alertDescription.textContent =
         'Notice: Refrigerator tray temperature is slightly above optimal preservation target.';
-      el.alertParameterDetail.textContent =
-        `Parameter: Tray Temperature | Current: ${Number(data.refrigerator_temperature).toFixed(2)} °C | Warning Threshold: > ${thresholds.tempWarning.toFixed(1)} °C`;
+      dom.alertParameterDetail.textContent =
+        `Parameter: Tray Temp | Current: ${Number(temp).toFixed(2)} °C | Warning Threshold: > ${thresholds.tempWarning.toFixed(1)} °C`;
     }
+    dom.alertTimestamp.textContent = `Last Checked: ${timeStr}`;
 
-    el.alertTimestamp.textContent = `Last Checked: ${timeStr}`;
-    return;
+  } else {
+    nextState = 'NORMAL';
+    currentEmergencyState = 'NORMAL';
+
+    dom.alertPanel.className = 'alert-panel alert-panel-normal';
+    dom.alertIconNormal.classList.remove('hidden');
+    dom.alertIconEmergency.classList.add('hidden');
+    dom.alertTitle.textContent = 'SYSTEM STATUS: ALL PARAMETERS NORMAL';
+    dom.alertLevelBadge.className = 'alert-level-badge level-normal';
+    dom.alertLevelBadge.textContent = 'NORMAL';
+    dom.alertDescription.textContent =
+      'All tray parameters are within acceptable safe ranges. No gas anomalies or temperature deviations detected.';
+    dom.alertParameterDetail.textContent = 'Monitored: DS18B20, DHT22, MQ135, HX711';
+    dom.alertTimestamp.textContent = lastEmergencyTimestamp ? `Prior Alert Cleared: ${lastEmergencyTimestamp}` : `Last Checked: ${timeStr}`;
   }
 
-  // Normal Status (Clean & Calm)
-  currentEmergencyState = 'NORMAL';
-  el.alertPanel.className = 'alert-panel alert-panel-normal';
-  el.alertIconNormal.classList.remove('hidden');
-  el.alertIconEmergency.classList.add('hidden');
+  currentTelemetry.warningStatus = nextState;
 
-  el.alertTitle.textContent = 'SYSTEM STATUS: ALL PARAMETERS NORMAL';
-  el.alertLevelBadge.className = 'alert-level-badge level-normal';
-  el.alertLevelBadge.textContent = 'NORMAL';
-
-  el.alertDescription.textContent =
-    'All tray parameters are within acceptable safe ranges. No gas anomalies or temperature deviations detected.';
-
-  el.alertParameterDetail.textContent =
-    'Monitored Sensors: DHT22, DS18B20, MQ135, HX711';
-
-  if (lastEmergencyTimestamp) {
-    el.alertTimestamp.textContent = `Last Anomaly Cleared (Prior Alert: ${lastEmergencyTimestamp})`;
-  } else {
-    el.alertTimestamp.textContent = `Last Checked: ${timeStr}`;
+  // Trigger immediate cloud snapshot if warning state transitioned
+  if (nextState !== previousWarningState && (isHardwareConnected || isDemoMode)) {
+    previousWarningState = nextState;
+    triggerImmediateCloudSnapshot('STATE_CHANGE');
+    
+    // Save Alert log
+    if (nextState !== 'NORMAL') {
+      saveAlert({
+        deviceId: thresholds.deviceId,
+        alertType: gasStatus === 'CRITICAL' || gasStatus === 'WARNING' ? 'GAS_ANOMALY' : 'TEMPERATURE',
+        message: dom.alertTitle.textContent,
+        severity: nextState,
+        reading: gasStatus === 'CRITICAL' ? gasRaw : temp,
+        source: currentTelemetry.dataSource
+      });
+    }
   }
 }
 
 // ==========================================
-// 9. LIVE SERIAL MONITOR FORMATTING
+// 8. DASHBOARD VISUALS UPDATER
+// ==========================================
+function updateAllDashboardVisuals() {
+  const temp = currentTelemetry.refrigeratorTemperature;
+  const hum = currentTelemetry.environmentHumidity;
+  const envTemp = currentTelemetry.environmentTemperature;
+  const gasRaw = currentTelemetry.mq135Raw;
+  const gasVolt = currentTelemetry.mq135Voltage;
+  const weight = currentTelemetry.trayWeightKg;
+
+  const tempValid = temp !== null && !isNaN(temp);
+  const humValid = hum !== null && !isNaN(hum);
+  const weightValid = weight !== null && !isNaN(weight);
+  const gasValid = gasRaw !== null && !isNaN(gasRaw);
+
+  // --- 1. Top Summary Cards (Digital Twin) ---
+  if (tempValid) {
+    dom.twinValTemp.textContent = Number(temp).toFixed(2);
+    setChipBadge(dom.twinStatusTemp, temp >= thresholds.tempCritical ? 'Critical' : (temp >= thresholds.tempWarning ? 'Warning' : 'Normal'), temp >= thresholds.tempCritical ? 'status-chip-critical' : (temp >= thresholds.tempWarning ? 'status-chip-warning' : 'status-chip-normal'));
+  } else {
+    dom.twinValTemp.textContent = '--';
+    setChipBadge(dom.twinStatusTemp, 'Offline', 'status-chip-critical');
+  }
+
+  if (humValid) {
+    dom.twinValHum.textContent = Number(hum).toFixed(2);
+    setChipBadge(dom.twinStatusHum, 'Normal', 'status-chip-normal');
+  } else {
+    dom.twinValHum.textContent = '--';
+    setChipBadge(dom.twinStatusHum, 'Offline', 'status-chip-critical');
+  }
+
+  if (weightValid) {
+    dom.twinValWeight.textContent = Number(weight).toFixed(2);
+    setChipBadge(dom.twinStatusWeight, 'Connected', 'status-chip-normal');
+  } else {
+    dom.twinValWeight.textContent = '--';
+    setChipBadge(dom.twinStatusWeight, 'Offline', 'status-chip-critical');
+  }
+
+  // System Status Card
+  dom.twinOverallTitle.textContent = currentEmergencyState;
+  dom.twinOverallTitle.style.color = currentEmergencyState === 'CRITICAL' ? 'var(--status-critical)' : (currentEmergencyState === 'WARNING' ? 'var(--status-warning)' : 'var(--status-normal)');
+  setChipBadge(dom.twinOverallChip, currentEmergencyState, currentEmergencyState === 'CRITICAL' ? 'status-chip-critical' : (currentEmergencyState === 'WARNING' ? 'status-chip-warning' : 'status-chip-normal'));
+  dom.twinMq135Sub.textContent = gasValid ? `MQ135 Gas: ${gasRaw} ADC (${Number(gasVolt || 0).toFixed(2)}V)` : 'MQ135 Gas: Offline';
+
+  // Ambient Glow in Digital Twin
+  if (currentEmergencyState === 'CRITICAL') {
+    dom.refrigeratorAmbientGlow.className = 'ambient-glow glow-critical';
+  } else if (currentEmergencyState === 'WARNING') {
+    dom.refrigeratorAmbientGlow.className = 'ambient-glow glow-warning';
+  } else {
+    dom.refrigeratorAmbientGlow.className = 'ambient-glow';
+  }
+
+  // Tray Front Acrylic Telemetry Overlay
+  dom.acrylicTemp.textContent = tempValid ? `${Number(temp).toFixed(2)}°C` : '--°C';
+  dom.acrylicHum.textContent = humValid ? `${Number(hum).toFixed(2)}%` : '--%';
+  dom.acrylicWeight.textContent = weightValid ? `${Number(weight).toFixed(2)} KG` : '-- KG';
+
+  // Tray Load Gauge (5KG capacity)
+  if (weightValid) {
+    const pct = Math.min(100, Math.max(0, (Number(weight) / 5.0) * 100));
+    dom.twinTrayGaugeFill.style.width = `${pct.toFixed(1)}%`;
+    dom.twinTrayGaugeText.textContent = `${Number(weight).toFixed(2)} / 5.00 KG`;
+  } else {
+    dom.twinTrayGaugeFill.style.width = '0%';
+    dom.twinTrayGaugeText.textContent = '0.00 / 5.00 KG';
+  }
+
+  // --- 2. Monitoring Module Cards ---
+  // Temperature
+  if (tempValid) {
+    dom.valTrayTemp.textContent = Number(temp).toFixed(2);
+    setCardBadge(dom.trayTempStatusBadge, temp >= thresholds.tempCritical ? 'Critical' : (temp >= thresholds.tempWarning ? 'Warning' : 'Normal'), temp >= thresholds.tempCritical ? 'status-badge-critical' : (temp >= thresholds.tempWarning ? 'status-badge-warning' : 'status-badge-normal'));
+  } else {
+    dom.valTrayTemp.textContent = '--';
+    setCardBadge(dom.trayTempStatusBadge, 'Disconnected', 'status-badge-error');
+  }
+
+  // Environment (DHT22)
+  if (humValid) dom.valEnvHum.textContent = Number(hum).toFixed(2);
+  else dom.valEnvHum.textContent = '--';
+  if (envTemp !== null && !isNaN(envTemp)) dom.valEnvTemp.textContent = Number(envTemp).toFixed(2);
+  else dom.valEnvTemp.textContent = '--';
+  setCardBadge(dom.envStatusBadge, (humValid && envTemp !== null) ? 'Normal' : 'Sensor Error', (humValid && envTemp !== null) ? 'status-badge-normal' : 'status-badge-error');
+
+  // MQ135 Gas
+  if (gasValid) {
+    dom.valMq135Raw.textContent = gasRaw;
+    dom.valMq135Voltage.textContent = gasVolt !== null ? Number(gasVolt).toFixed(2) : '--';
+    setCardBadge(dom.gasStatusBadge, gasRaw >= thresholds.mq135Critical ? 'Critical Anomaly' : (gasRaw >= thresholds.mq135Warning ? 'Warning' : 'Normal'), gasRaw >= thresholds.mq135Critical ? 'status-badge-critical' : (gasRaw >= thresholds.mq135Warning ? 'status-badge-warning' : 'status-badge-normal'));
+  } else {
+    dom.valMq135Raw.textContent = '--';
+    dom.valMq135Voltage.textContent = '--';
+    setCardBadge(dom.gasStatusBadge, 'Sensor Error', 'status-badge-error');
+  }
+
+  // Tray Weight (KG Only, Never Raw HX711)
+  if (weightValid) {
+    dom.valTrayWeight.textContent = Number(weight).toFixed(2);
+    setCardBadge(dom.weightStatusBadge, 'Connected', 'status-badge-normal');
+  } else {
+    dom.valTrayWeight.textContent = '--';
+    setCardBadge(dom.weightStatusBadge, 'Sensor Error', 'status-badge-error');
+  }
+
+  // Sidebar Mini Card
+  dom.miniTrayTemp.textContent = tempValid ? `${Number(temp).toFixed(1)} °C` : '-- °C';
+  dom.miniTrayWeight.textContent = weightValid ? `${Number(weight).toFixed(2)} KG` : '-- KG';
+  dom.miniTrayStatus.textContent = currentEmergencyState;
+  dom.miniTrayStatus.style.color = currentEmergencyState === 'CRITICAL' ? 'var(--status-critical)' : (currentEmergencyState === 'WARNING' ? 'var(--status-warning)' : 'var(--status-normal)');
+
+  // Refresh Risk Analysis if active or temp changed
+  if (activePage === 'risk-analysis') {
+    renderRiskAnalysisModule();
+  }
+}
+
+function setChipBadge(el, text, className) {
+  if (!el) return;
+  el.className = `status-chip ${className}`;
+  el.textContent = text;
+}
+
+function setCardBadge(el, text, className) {
+  if (!el) return;
+  el.className = `card-status-badge ${className}`;
+  el.textContent = text;
+}
+
+function resetTelemetryState() {
+  currentTelemetry = {
+    environmentTemperature: null,
+    environmentHumidity: null,
+    refrigeratorTemperature: null,
+    mq135Raw: null,
+    mq135Voltage: null,
+    trayWeightKg: null,
+    warningStatus: 'NORMAL',
+    dataSource: isDemoMode ? 'SIMULATED' : 'LIVE',
+    timestamp: null
+  };
+  consecutiveGasCritical = 0;
+  consecutiveTempCritical = 0;
+  currentEmergencyState = 'NORMAL';
+  updateAllDashboardVisuals();
+}
+
+// ==========================================
+// 9. DIGITAL TWIN REFRIGERATOR TRAY MODULE
+// ==========================================
+function renderDigitalTwinTray() {
+  if (!dom.twinTraySurface) return;
+
+  if (productsList.length === 0) {
+    dom.twinTraySurface.innerHTML = `
+      <div class="tray-loading-placeholder">
+        <p>No food products currently registered on the tray.</p>
+        <button class="btn btn-primary btn-sm" id="btn-twin-add-prod" style="margin-top: 10px;">+ Add Food Product</button>
+      </div>
+    `;
+    const addBtn = document.getElementById('btn-twin-add-prod');
+    if (addBtn) addBtn.addEventListener('click', () => openProductModal());
+    return;
+  }
+
+  const currentTemp = currentTelemetry.refrigeratorTemperature !== null ? Number(currentTelemetry.refrigeratorTemperature) : 4.0;
+
+  let html = '';
+  productsList.forEach((prod) => {
+    const risk = evaluateProductRisk(prod, currentTemp);
+    const badgeClass = getRiskBadgeClass(risk.classification);
+
+    html += `
+      <div class="twin-product-card" data-product-id="${prod.id}" title="Click to view ${escapeHtml(prod.name)} details">
+        <div class="twin-product-top">
+          <span class="twin-product-category">${escapeHtml(prod.category || 'General')}</span>
+          <span class="twin-product-badge ${badgeClass}">${risk.classification}</span>
+        </div>
+        <div class="twin-product-name">${escapeHtml(prod.name)}</div>
+        <div class="twin-product-meta">
+          <span class="twin-weight-pill">${Number(prod.weightKg || 0).toFixed(2)} KG</span>
+          <span class="twin-expiry-pill">${formatExpiryCountdown(prod.expiryDate)}</span>
+        </div>
+      </div>
+    `;
+  });
+
+  dom.twinTraySurface.innerHTML = html;
+
+  // Add click listeners to product cards
+  dom.twinTraySurface.querySelectorAll('.twin-product-card').forEach((card) => {
+    card.addEventListener('click', () => {
+      const id = card.getAttribute('data-product-id');
+      if (id) openProductViewModal(id);
+    });
+  });
+}
+
+function getRiskBadgeClass(classification) {
+  switch (classification) {
+    case 'REMOVE': return 'badge-remove';
+    case 'SELL FIRST': return 'badge-sell-first';
+    case 'INSPECT': return 'badge-inspect';
+    case 'SAFE': default: return 'badge-safe';
+  }
+}
+
+// ==========================================
+// 10. RULE-BASED FOOD RISK ANALYSIS ENGINE
+// ==========================================
+/**
+ * Strict Priority Order: REMOVE > SELL FIRST > INSPECT > SAFE
+ * Evaluates:
+ * 1. Product expiry date
+ * 2. Current refrigerator temperature
+ * 3. Configurable storage thresholds
+ */
+function evaluateProductRisk(product, currentTemp) {
+  const now = new Date();
+  now.setHours(0, 0, 0, 0);
+
+  const expDate = new Date(product.expiryDate);
+  expDate.setHours(0, 0, 0, 0);
+
+  // Difference in calendar days
+  const diffTime = expDate - now;
+  const daysToExpiry = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+
+  const criticalTempThreshold = thresholds.tempRiskRemove || 9.0;
+  const warningTempThreshold = thresholds.tempWarning || 5.0;
+
+  // RULE 1: REMOVE (Highest Priority)
+  // Condition: Expiry date is in the past OR Refrigerator temp reaches 9°C or higher
+  if (daysToExpiry < 0 || (currentTemp !== null && currentTemp >= criticalTempThreshold)) {
+    let reason = 'Expiry date passed or critical storage temperature detected.';
+    let ruleName = daysToExpiry < 0 ? 'Rule 1: Expiry Date Passed' : `Rule 1: Critical Temperature (${currentTemp.toFixed(1)}°C \u2265 ${criticalTempThreshold}°C)`;
+    let recommendation = daysToExpiry < 0 ? 'Product is expired. Discard item to prevent contamination.' : 'Critical storage temperature detected. Spoilage risk imminent. Remove or verify.';
+
+    return {
+      classification: 'REMOVE',
+      priority: 1,
+      rule: ruleName,
+      reason,
+      recommendation,
+      daysToExpiry
+    };
+  }
+
+  // RULE 2: SELL FIRST (High Priority)
+  // Condition: Expiry is today OR within the next 2 calendar days
+  if (daysToExpiry <= 2) {
+    return {
+      classification: 'SELL FIRST',
+      priority: 2,
+      rule: 'Rule 2: Expiry Imminent (\u2264 2 Days)',
+      reason: 'Expiry is approaching.',
+      recommendation: daysToExpiry === 0 ? 'Expires today! Prioritize immediate consumption or sale.' : `Expires in ${daysToExpiry} day(s). Prioritize for use or discount.`,
+      daysToExpiry
+    };
+  }
+
+  // RULE 3: INSPECT (Moderate Priority)
+  // Condition: Temp is above 5°C but below 9°C OR Expiry within next 4 calendar days
+  if ((currentTemp !== null && currentTemp > warningTempThreshold && currentTemp < criticalTempThreshold) || daysToExpiry <= 4) {
+    let reason = 'Temperature requires review or expiry is approaching.';
+    let ruleName = (currentTemp !== null && currentTemp > warningTempThreshold) ? `Rule 3: Elevated Temperature (${currentTemp.toFixed(1)}°C)` : 'Rule 3: Approaching Expiry (\u2264 4 Days)';
+    let recommendation = 'Inspect packaging seal and cooling condition. Plan for consumption within 4 days.';
+
+    return {
+      classification: 'INSPECT',
+      priority: 3,
+      rule: ruleName,
+      reason,
+      recommendation,
+      daysToExpiry
+    };
+  }
+
+  // RULE 4: SAFE (Default)
+  // Condition: Temp is at or below 5°C AND Expiry is > 4 calendar days away
+  return {
+    classification: 'SAFE',
+    priority: 4,
+    rule: 'Rule 4: Standard Chilled Storage',
+    reason: 'No configured threshold crossed.',
+    recommendation: 'Cold chain intact. Product longevity is well preserved.',
+    daysToExpiry
+  };
+}
+
+function renderRiskAnalysisModule() {
+  if (!dom.riskTableBody) return;
+
+  const currentTemp = currentTelemetry.refrigeratorTemperature !== null ? Number(currentTelemetry.refrigeratorTemperature) : 4.0;
+  dom.riskCurrentTempBadge.textContent = currentTelemetry.refrigeratorTemperature !== null ? `${currentTemp.toFixed(2)} °C` : '4.00 °C (Nominal Reference)';
+
+  let countSafe = 0;
+  let countInspect = 0;
+  let countSellFirst = 0;
+  let countRemove = 0;
+
+  let rowsHtml = '';
+
+  productsList.forEach((prod) => {
+    const risk = evaluateProductRisk(prod, currentTemp);
+
+    if (risk.classification === 'SAFE') countSafe++;
+    else if (risk.classification === 'INSPECT') countInspect++;
+    else if (risk.classification === 'SELL FIRST') countSellFirst++;
+    else if (risk.classification === 'REMOVE') countRemove++;
+
+    const badgeClass = getRiskBadgeClass(risk.classification);
+
+    let daysText = '';
+    if (risk.daysToExpiry < 0) {
+      daysText = `<span style="color: var(--status-critical); font-weight: 700;">Expired (${Math.abs(risk.daysToExpiry)}d ago)</span>`;
+    } else if (risk.daysToExpiry === 0) {
+      daysText = `<span style="color: var(--status-sell-first); font-weight: 700;">Expires Today</span>`;
+    } else {
+      daysText = `${risk.daysToExpiry} day(s)`;
+    }
+
+    rowsHtml += `
+      <tr>
+        <td>
+          <div class="table-product-title">${escapeHtml(prod.name)}</div>
+          <div class="table-product-cat">${Number(prod.quantity || 1)} ${escapeHtml(prod.unit || 'units')} • ${Number(prod.weightKg || 0).toFixed(2)} KG</div>
+        </td>
+        <td><span class="twin-product-category">${escapeHtml(prod.category || 'General')}</span></td>
+        <td>${escapeHtml(prod.expiryDate)}</td>
+        <td>${daysText}</td>
+        <td>${Number(prod.storageTemperature || 4.0).toFixed(1)} °C</td>
+        <td><span class="twin-product-badge ${badgeClass}">${risk.classification}</span></td>
+        <td><code style="font-size: 0.75rem;">${escapeHtml(risk.rule)}</code></td>
+        <td>
+          <div style="font-size: 0.8rem; color: #ffffff;">${escapeHtml(risk.reason)}</div>
+          <div style="font-size: 0.725rem; color: var(--text-muted);">${escapeHtml(risk.recommendation)}</div>
+        </td>
+      </tr>
+    `;
+  });
+
+  dom.riskTableBody.innerHTML = rowsHtml || `<tr><td colspan="8" style="text-align: center; color: var(--text-muted); padding: 30px;">No products currently registered in the inventory.</td></tr>`;
+
+  // Update Summary Counts
+  dom.riskCountSafe.textContent = countSafe;
+  dom.riskCountInspect.textContent = countInspect;
+  dom.riskCountSellFirst.textContent = countSellFirst;
+  dom.riskCountRemove.textContent = countRemove;
+
+  // Sidebar Pill
+  if (countRemove > 0) {
+    dom.navRiskSummaryPill.textContent = `${countRemove} REMOVE`;
+    dom.navRiskSummaryPill.className = 'nav-risk-pill badge-remove';
+  } else if (countSellFirst > 0) {
+    dom.navRiskSummaryPill.textContent = `${countSellFirst} SELL`;
+    dom.navRiskSummaryPill.className = 'nav-risk-pill badge-sell-first';
+  } else if (countInspect > 0) {
+    dom.navRiskSummaryPill.textContent = `${countInspect} INSPECT`;
+    dom.navRiskSummaryPill.className = 'nav-risk-pill badge-inspect';
+  } else {
+    dom.navRiskSummaryPill.textContent = 'ALL SAFE';
+    dom.navRiskSummaryPill.className = 'nav-risk-pill badge-safe';
+  }
+}
+
+function formatExpiryCountdown(expiryDateStr) {
+  if (!expiryDateStr) return 'No expiry date';
+  const now = new Date();
+  now.setHours(0, 0, 0, 0);
+  const exp = new Date(expiryDateStr);
+  exp.setHours(0, 0, 0, 0);
+
+  const diffDays = Math.ceil((exp - now) / (1000 * 60 * 60 * 24));
+  if (diffDays < 0) return `Expired ${Math.abs(diffDays)}d ago`;
+  if (diffDays === 0) return 'Expires Today';
+  return `${diffDays} days left`;
+}
+
+// ==========================================
+// 11. PRODUCTS / INVENTORY MODULE
+// ==========================================
+function renderProductsTable() {
+  if (!dom.productsTableBody) return;
+
+  const searchQuery = (dom.inputSearchProduct.value || '').trim().toLowerCase();
+  const categoryFilter = dom.filterCategory.value;
+  const expiryFilter = dom.filterExpiry.value;
+  const riskFilter = dom.filterRisk.value;
+
+  const currentTemp = currentTelemetry.refrigeratorTemperature !== null ? Number(currentTelemetry.refrigeratorTemperature) : 4.0;
+  const now = new Date();
+  now.setHours(0, 0, 0, 0);
+
+  const filtered = productsList.filter((prod) => {
+    // Name / Description Search
+    if (searchQuery) {
+      const matchName = (prod.name || '').toLowerCase().includes(searchQuery);
+      const matchDesc = (prod.description || '').toLowerCase().includes(searchQuery);
+      if (!matchName && !matchDesc) return false;
+    }
+
+    // Category Filter
+    if (categoryFilter !== 'ALL' && prod.category !== categoryFilter) {
+      return false;
+    }
+
+    // Risk Classification Filter
+    const risk = evaluateProductRisk(prod, currentTemp);
+    if (riskFilter !== 'ALL' && risk.classification !== riskFilter) {
+      return false;
+    }
+
+    // Expiry Filter
+    if (expiryFilter !== 'ALL') {
+      const days = risk.daysToExpiry;
+      if (expiryFilter === 'EXPIRED' && days >= 0) return false;
+      if (expiryFilter === 'TODAY' && days !== 0) return false;
+      if (expiryFilter === 'SOON_2' && (days < 0 || days > 2)) return false;
+      if (expiryFilter === 'SOON_4' && (days < 0 || days > 4)) return false;
+      if (expiryFilter === 'SAFE' && days <= 4) return false;
+    }
+
+    return true;
+  });
+
+  if (filtered.length === 0) {
+    dom.productsTableBody.innerHTML = '';
+    dom.productsEmptyState.classList.remove('hidden');
+    return;
+  }
+
+  dom.productsEmptyState.classList.add('hidden');
+
+  let rowsHtml = '';
+  filtered.forEach((prod) => {
+    const risk = evaluateProductRisk(prod, currentTemp);
+    const badgeClass = getRiskBadgeClass(risk.classification);
+
+    rowsHtml += `
+      <tr>
+        <td>
+          <div class="table-product-title">${escapeHtml(prod.name)}</div>
+          <div class="table-product-cat">${escapeHtml(prod.description || 'No description provided')}</div>
+        </td>
+        <td><span class="twin-product-category">${escapeHtml(prod.category || 'General')}</span></td>
+        <td><strong>${Number(prod.quantity || 1)}</strong> ${escapeHtml(prod.unit || 'units')}</td>
+        <td><span class="twin-weight-pill">${Number(prod.weightKg || 0).toFixed(2)} KG</span></td>
+        <td>${Number(prod.storageTemperature || 4.0).toFixed(1)} °C</td>
+        <td>${escapeHtml(prod.storageDate || '--')}</td>
+        <td>
+          <div>${escapeHtml(prod.expiryDate || '--')}</div>
+          <div style="font-size: 0.725rem; color: var(--text-muted);">${formatExpiryCountdown(prod.expiryDate)}</div>
+        </td>
+        <td><span class="twin-product-badge ${badgeClass}">${risk.classification}</span></td>
+        <td class="text-right">
+          <div class="table-actions-cell">
+            <button class="action-btn" data-action="view" data-id="${prod.id}" title="View Details">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="btn-icon-sm"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+            </button>
+            <button class="action-btn" data-action="edit" data-id="${prod.id}" title="Edit Product">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="btn-icon-sm"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+            </button>
+            <button class="action-btn btn-delete" data-action="delete" data-id="${prod.id}" title="Delete Product">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="btn-icon-sm"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+            </button>
+          </div>
+        </td>
+      </tr>
+    `;
+  });
+
+  dom.productsTableBody.innerHTML = rowsHtml;
+
+  // Add click listeners to action buttons
+  dom.productsTableBody.querySelectorAll('.action-btn').forEach((btn) => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const action = btn.getAttribute('data-action');
+      const id = btn.getAttribute('data-id');
+      if (action === 'view') openProductViewModal(id);
+      else if (action === 'edit') openProductModal(id);
+      else if (action === 'delete') handleDeleteProduct(id);
+    });
+  });
+}
+
+function openProductModal(productId = null) {
+  editingProductId = productId;
+
+  if (productId) {
+    const prod = productsList.find((p) => p.id === productId);
+    if (!prod) return;
+    dom.productModalTitle.textContent = 'Edit Food Product';
+    dom.inputProductId.value = prod.id;
+    dom.inputProductName.value = prod.name || '';
+    dom.inputProductCategory.value = prod.category || '';
+    dom.inputProductQuantity.value = prod.quantity || 1;
+    dom.inputProductUnit.value = prod.unit || '';
+    dom.inputProductWeight.value = prod.weightKg || 0.5;
+    dom.inputProductTemp.value = prod.storageTemperature || 4.0;
+    dom.inputProductStorageDate.value = prod.storageDate || '';
+    dom.inputProductExpiryDate.value = prod.expiryDate || '';
+    dom.inputProductDescription.value = prod.description || '';
+  } else {
+    dom.productModalTitle.textContent = 'Register Food Product';
+    dom.productForm.reset();
+    dom.inputProductId.value = '';
+    dom.inputProductQuantity.value = 1;
+    dom.inputProductWeight.value = 0.50;
+    dom.inputProductTemp.value = 4.0;
+    dom.inputProductStorageDate.value = new Date().toISOString().split('T')[0];
+    const exp = new Date();
+    exp.setDate(exp.getDate() + 5);
+    dom.inputProductExpiryDate.value = exp.toISOString().split('T')[0];
+  }
+
+  dom.productModal.classList.remove('hidden');
+}
+
+function closeProductModal() {
+  dom.productModal.classList.add('hidden');
+  editingProductId = null;
+}
+
+async function handleProductFormSubmit(e) {
+  e.preventDefault();
+
+  const productData = {
+    name: dom.inputProductName.value.trim(),
+    category: dom.inputProductCategory.value,
+    quantity: parseInt(dom.inputProductQuantity.value, 10) || 1,
+    unit: dom.inputProductUnit.value.trim(),
+    weightKg: parseFloat(dom.inputProductWeight.value) || 0.5,
+    storageTemperature: parseFloat(dom.inputProductTemp.value) || 4.0,
+    storageDate: dom.inputProductStorageDate.value,
+    expiryDate: dom.inputProductExpiryDate.value,
+    description: dom.inputProductDescription.value.trim(),
+    imageUrl: '',
+    riskStatus: 'SAFE'
+  };
+
+  const currentTemp = currentTelemetry.refrigeratorTemperature !== null ? Number(currentTelemetry.refrigeratorTemperature) : 4.0;
+  const evaluatedRisk = evaluateProductRisk(productData, currentTemp);
+  productData.riskStatus = evaluatedRisk.classification;
+
+  if (editingProductId) {
+    await updateProduct(editingProductId, productData);
+    logTerminal('SYSTEM', `Product updated: ${productData.name}`, 'terminal-system');
+  } else {
+    await addProduct(productData);
+    logTerminal('SYSTEM', `New product registered: ${productData.name}`, 'terminal-system');
+  }
+
+  closeProductModal();
+}
+
+async function handleDeleteProduct(id) {
+  const prod = productsList.find((p) => p.id === id);
+  const name = prod ? prod.name : 'this item';
+
+  if (confirm(`Are you sure you want to remove "${name}" from the tray inventory?`)) {
+    await deleteProduct(id);
+    logTerminal('SYSTEM', `Product removed: ${name}`, 'terminal-warning');
+  }
+}
+
+function openProductViewModal(productId) {
+  const prod = productsList.find((p) => p.id === productId);
+  if (!prod) return;
+
+  const currentTemp = currentTelemetry.refrigeratorTemperature !== null ? Number(currentTelemetry.refrigeratorTemperature) : 4.0;
+  const risk = evaluateProductRisk(prod, currentTemp);
+  const badgeClass = getRiskBadgeClass(risk.classification);
+
+  dom.productViewContent.innerHTML = `
+    <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px;">
+      <h4 style="font-size: 1.25rem; font-weight: 700; color: #ffffff;">${escapeHtml(prod.name)}</h4>
+      <span class="twin-product-badge ${badgeClass}">${risk.classification}</span>
+    </div>
+    <div class="view-detail-row">
+      <span class="view-detail-label">Category:</span>
+      <span class="view-detail-val">${escapeHtml(prod.category || 'General')}</span>
+    </div>
+    <div class="view-detail-row">
+      <span class="view-detail-label">Quantity & Unit:</span>
+      <span class="view-detail-val">${Number(prod.quantity || 1)} ${escapeHtml(prod.unit || 'units')}</span>
+    </div>
+    <div class="view-detail-row">
+      <span class="view-detail-label">Item Weight:</span>
+      <span class="view-detail-val">${Number(prod.weightKg || 0).toFixed(2)} KG</span>
+    </div>
+    <div class="view-detail-row">
+      <span class="view-detail-label">Target Storage Temp:</span>
+      <span class="view-detail-val">${Number(prod.storageTemperature || 4.0).toFixed(1)} °C</span>
+    </div>
+    <div class="view-detail-row">
+      <span class="view-detail-label">Date Stored:</span>
+      <span class="view-detail-val">${escapeHtml(prod.storageDate || '--')}</span>
+    </div>
+    <div class="view-detail-row">
+      <span class="view-detail-label">Expiration Date:</span>
+      <span class="view-detail-val">${escapeHtml(prod.expiryDate || '--')} (${formatExpiryCountdown(prod.expiryDate)})</span>
+    </div>
+    <div class="view-detail-row">
+      <span class="view-detail-label">Triggered Rule:</span>
+      <span class="view-detail-val" style="color: var(--accent-cyan); font-family: 'JetBrains Mono', monospace;">${escapeHtml(risk.rule)}</span>
+    </div>
+    <div class="view-detail-row">
+      <span class="view-detail-label">Preservation Assessment:</span>
+      <span class="view-detail-val">${escapeHtml(risk.reason)}</span>
+    </div>
+    <div style="margin-top: 14px; font-size: 0.8rem; color: var(--text-secondary); background: var(--bg-card-subtle); padding: 12px; border-radius: var(--radius-sm); border: 1px solid var(--border-color);">
+      <strong>Recommendation:</strong> ${escapeHtml(risk.recommendation)}
+    </div>
+  `;
+
+  dom.btnViewEdit.setAttribute('data-product-id', prod.id);
+  dom.productViewModal.classList.remove('hidden');
+}
+
+function closeProductViewModal() {
+  dom.productViewModal.classList.add('hidden');
+}
+
+// ==========================================
+// 12. CLOUD SNAPSHOT SCHEDULER & HISTORY
+// ==========================================
+function startSnapshotScheduler() {
+  if (snapshotTimer) clearInterval(snapshotTimer);
+
+  const intervalMs = (thresholds.snapshotIntervalSec || 10) * 1000;
+  snapshotTimer = setInterval(() => {
+    if (isHardwareConnected || isDemoMode) {
+      triggerImmediateCloudSnapshot('PERIODIC');
+    }
+  }, intervalMs);
+}
+
+async function triggerImmediateCloudSnapshot(reason = 'PERIODIC') {
+  if (currentTelemetry.refrigeratorTemperature === null && !isDemoMode) {
+    return; // Don't save disconnected null telemetry
+  }
+
+  const snapshot = {
+    deviceId: thresholds.deviceId || 'TRAYVANTA_ESP32_01',
+    environmentTemperature: currentTelemetry.environmentTemperature,
+    environmentHumidity: currentTelemetry.environmentHumidity,
+    refrigeratorTemperature: currentTelemetry.refrigeratorTemperature,
+    mq135Raw: currentTelemetry.mq135Raw,
+    mq135Voltage: currentTelemetry.mq135Voltage,
+    trayWeightKg: currentTelemetry.trayWeightKg,
+    warningStatus: currentTelemetry.warningStatus || 'NORMAL',
+    source: currentTelemetry.dataSource || 'LIVE'
+  };
+
+  await saveSensorReading(snapshot);
+
+  if (activePage === 'history') {
+    loadHistoricalRecordsView();
+  }
+}
+
+async function loadHistoricalRecordsView(limitCount = 100) {
+  const sourceFilter = dom.filterHistorySource.value;
+  const records = await getHistoricalReadings(limitCount, sourceFilter);
+  historyBuffer = records || [];
+  renderHistoryTable();
+}
+
+function renderHistoryTable() {
+  if (!dom.historyTableBody) return;
+
+  const searchQuery = (dom.inputSearchHistory.value || '').trim().toLowerCase();
+  const sourceFilter = dom.filterHistorySource.value;
+  const warningFilter = dom.filterHistoryWarning.value;
+
+  const filtered = historyBuffer.filter((rec) => {
+    if (sourceFilter !== 'ALL' && rec.source !== sourceFilter) return false;
+    if (warningFilter !== 'ALL' && rec.warningStatus !== warningFilter) return false;
+    if (searchQuery) {
+      const ts = (rec.timestamp || '').toLowerCase();
+      const dev = (rec.deviceId || '').toLowerCase();
+      const stat = (rec.warningStatus || '').toLowerCase();
+      if (!ts.includes(searchQuery) && !dev.includes(searchQuery) && !stat.includes(searchQuery)) return false;
+    }
+    return true;
+  });
+
+  // Update Summary Cards
+  dom.histTotalSamples.textContent = historyBuffer.length;
+  if (historyBuffer.length > 0) {
+    const latest = historyBuffer[0];
+    const d = new Date(latest.timestamp);
+    dom.histLatestTimestamp.textContent = d.toLocaleTimeString();
+    dom.histLatestDate.textContent = d.toLocaleDateString();
+  } else {
+    dom.histLatestTimestamp.textContent = '--:--:--';
+    dom.histLatestDate.textContent = 'No records yet';
+  }
+
+  const warnings = historyBuffer.filter((r) => r.warningStatus === 'WARNING' || r.warningStatus === 'CRITICAL').length;
+  dom.histWarningsCount.textContent = warnings;
+
+  if (filtered.length === 0) {
+    dom.historyTableBody.innerHTML = `<tr><td colspan="8" style="text-align: center; color: var(--text-muted); padding: 30px;">No sensor snapshots match the filter.</td></tr>`;
+    dom.historyShowingLabel.textContent = 'Showing 0 records';
+    return;
+  }
+
+  dom.historyShowingLabel.textContent = `Showing latest ${filtered.length} records`;
+
+  let rowsHtml = '';
+  filtered.forEach((rec) => {
+    const d = new Date(rec.timestamp);
+    const timeStr = `${d.toLocaleDateString()} ${d.toLocaleTimeString()}`;
+    const badgeClass = rec.warningStatus === 'CRITICAL' ? 'status-chip-critical' : (rec.warningStatus === 'WARNING' ? 'status-chip-warning' : 'status-chip-normal');
+    const sourceClass = rec.source === 'LIVE' ? 'badge-safe' : 'badge-sell-first';
+
+    rowsHtml += `
+      <tr>
+        <td style="font-family: 'JetBrains Mono', monospace; font-size: 0.775rem;">${timeStr}</td>
+        <td><code>${escapeHtml(rec.deviceId || 'ESP32')}</code></td>
+        <td><strong>${rec.refrigeratorTemperature !== null ? Number(rec.refrigeratorTemperature).toFixed(2) : '--'}</strong> °C</td>
+        <td>${rec.environmentHumidity !== null ? Number(rec.environmentHumidity).toFixed(2) : '--'} %</td>
+        <td>${rec.mq135Raw || '--'} <span style="color: var(--text-muted); font-size: 0.725rem;">(${Number(rec.mq135Voltage || 0).toFixed(2)}V)</span></td>
+        <td><strong style="color: var(--accent-cyan); font-family: 'JetBrains Mono', monospace;">${rec.trayWeightKg !== null ? Number(rec.trayWeightKg).toFixed(2) : '--'}</strong> KG</td>
+        <td><span class="status-chip ${badgeClass}">${rec.warningStatus}</span></td>
+        <td><span class="twin-product-badge ${sourceClass}">${rec.source}</span></td>
+      </tr>
+    `;
+  });
+
+  dom.historyTableBody.innerHTML = rowsHtml;
+}
+
+// ==========================================
+// 13. CSV EXPORTER (RFC 4180 Standard)
+// ==========================================
+async function exportHistoryToCsv() {
+  const records = await getHistoricalReadings(500, 'ALL');
+  if (!records || records.length === 0) {
+    alert('No telemetry records available to export.');
+    return;
+  }
+
+  const headers = [
+    'Timestamp',
+    'Device_ID',
+    'Data_Source',
+    'Refrigerator_Temperature_C',
+    'Environment_Temperature_C',
+    'Environment_Humidity_Percent',
+    'MQ135_Raw_ADC',
+    'MQ135_Voltage_V',
+    'Tray_Weight_KG',
+    'Warning_Status'
+  ];
+
+  const rows = [headers.join(',')];
+
+  records.forEach((rec) => {
+    const row = [
+      `"${rec.timestamp || ''}"`,
+      `"${rec.deviceId || ''}"`,
+      `"${rec.source || 'LIVE'}"`,
+      rec.refrigeratorTemperature !== null ? Number(rec.refrigeratorTemperature).toFixed(2) : '',
+      rec.environmentTemperature !== null ? Number(rec.environmentTemperature).toFixed(2) : '',
+      rec.environmentHumidity !== null ? Number(rec.environmentHumidity).toFixed(2) : '',
+      rec.mq135Raw !== null ? rec.mq135Raw : '',
+      rec.mq135Voltage !== null ? Number(rec.mq135Voltage).toFixed(2) : '',
+      rec.trayWeightKg !== null ? Number(rec.trayWeightKg).toFixed(2) : '',
+      `"${rec.warningStatus || 'NORMAL'}"`
+    ];
+    rows.push(row.join(','));
+  });
+
+  const csvContent = 'data:text/csv;charset=utf-8,' + encodeURIComponent(rows.join('\r\n'));
+  const link = document.createElement('a');
+  link.setAttribute('href', csvContent);
+  const nowStr = new Date().toISOString().replace(/[:.]/g, '-');
+  link.setAttribute('download', `TRAYVANTA_Sensor_History_${nowStr}.csv`);
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+
+  logTerminal('SYSTEM', `Exported ${records.length} records to CSV.`, 'terminal-system');
+}
+
+// ==========================================
+// 14. INTERACTIVE HIGH-DPI CANVAS CHART
+// ==========================================
+function initCanvasChart() {
+  renderTelemetryChart();
+}
+
+function setChartMode(mode) {
+  chartMode = mode;
+  if (mode === 'env') {
+    dom.btnChartModeEnv.classList.add('active');
+    dom.btnChartModeWeight.classList.remove('active');
+    dom.chartSubtitle.textContent = 'Showing Refrigerator Temperature, Humidity & Gas concentration over time';
+    dom.chartLegend.innerHTML = `
+      <span class="legend-item"><span class="legend-color-box col-temp"></span> Refrigerator Temp (°C)</span>
+      <span class="legend-item"><span class="legend-color-box col-hum"></span> Humidity (%)</span>
+      <span class="legend-item"><span class="legend-color-box col-gas"></span> Gas ADC (/100)</span>
+    `;
+  } else {
+    dom.btnChartModeEnv.classList.remove('active');
+    dom.btnChartModeWeight.classList.add('active');
+    dom.chartSubtitle.textContent = 'Showing Total Stored Tray Weight (KG) measured via 5KG Load Cell + HX711';
+    dom.chartLegend.innerHTML = `
+      <span class="legend-item"><span class="legend-color-box col-weight"></span> Tray Weight (KG)</span>
+    `;
+  }
+  renderTelemetryChart();
+}
+
+function recordTelemetryForChart() {
+  if (currentTelemetry.refrigeratorTemperature === null && currentTelemetry.trayWeightKg === null) {
+    return;
+  }
+
+  chartHistoryPoints.push({
+    time: Date.now(),
+    temp: currentTelemetry.refrigeratorTemperature !== null ? Number(currentTelemetry.refrigeratorTemperature) : 0,
+    hum: currentTelemetry.environmentHumidity !== null ? Number(currentTelemetry.environmentHumidity) : 0,
+    gas: currentTelemetry.mq135Raw !== null ? Number(currentTelemetry.mq135Raw) / 100 : 0, // scale for chart
+    weight: currentTelemetry.trayWeightKg !== null ? Number(currentTelemetry.trayWeightKg) : 0
+  });
+
+  // Keep last 300 live points in memory
+  if (chartHistoryPoints.length > 300) {
+    chartHistoryPoints.shift();
+  }
+
+  if (activePage === 'monitoring') {
+    renderTelemetryChart();
+  }
+}
+
+function renderTelemetryChart() {
+  const canvas = dom.telemetryCanvas;
+  if (!canvas) return;
+
+  const ctx = canvas.getContext('2d');
+  const dpr = window.devicePixelRatio || 1;
+
+  const rect = canvas.getBoundingClientRect();
+  const width = rect.width;
+  const height = rect.height;
+
+  canvas.width = width * dpr;
+  canvas.height = height * dpr;
+  ctx.scale(dpr, dpr);
+
+  // Background clear
+  ctx.clearRect(0, 0, width, height);
+
+  // Filter points according to range
+  const now = Date.now();
+  let points = chartHistoryPoints;
+  if (chartRangeSeconds > 0) {
+    const cutoff = now - chartRangeSeconds * 1000;
+    points = chartHistoryPoints.filter((p) => p.time >= cutoff);
+  }
+
+  dom.chartSampleCount.textContent = `Samples in view: ${points.length}`;
+
+  const paddingLeft = 45;
+  const paddingRight = 20;
+  const paddingTop = 20;
+  const paddingBottom = 30;
+
+  const chartW = width - paddingLeft - paddingRight;
+  const chartH = height - paddingTop - paddingBottom;
+
+  if (chartW <= 0 || chartH <= 0) return;
+
+  // Grid Lines & Axes
+  ctx.strokeStyle = '#1e3052';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+
+  // 4 horizontal gridlines
+  for (let i = 0; i <= 4; i++) {
+    const y = paddingTop + (chartH / 4) * i;
+    ctx.moveTo(paddingLeft, y);
+    ctx.lineTo(paddingLeft + chartW, y);
+  }
+  ctx.stroke();
+
+  // Axis Labels
+  ctx.fillStyle = '#64748b';
+  ctx.font = '10px JetBrains Mono, monospace';
+  ctx.textAlign = 'right';
+
+  let maxY = chartMode === 'env' ? 100 : 6.0;
+  let minY = 0;
+
+  for (let i = 0; i <= 4; i++) {
+    const y = paddingTop + (chartH / 4) * i;
+    const val = maxY - ((maxY - minY) / 4) * i;
+    ctx.fillText(chartMode === 'env' ? `${val.toFixed(0)}` : `${val.toFixed(1)}kg`, paddingLeft - 8, y + 3);
+  }
+
+  if (points.length < 2) {
+    ctx.fillStyle = '#94a3b8';
+    ctx.textAlign = 'center';
+    ctx.font = '12px Inter, sans-serif';
+    ctx.fillText('Awaiting real-time data packets to draw line...', paddingLeft + chartW / 2, paddingTop + chartH / 2);
+    return;
+  }
+
+  // Draw Series
+  const startTime = points[0].time;
+  const endTime = points[points.length - 1].time;
+  const timeSpan = Math.max(1000, endTime - startTime);
+
+  function getX(t) {
+    return paddingLeft + ((t - startTime) / timeSpan) * chartW;
+  }
+  function getY(val) {
+    const clamped = Math.max(minY, Math.min(maxY, val));
+    return paddingTop + chartH - ((clamped - minY) / (maxY - minY)) * chartH;
+  }
+
+  if (chartMode === 'env') {
+    // 1. Humidity (Blue)
+    drawSeriesLine(ctx, points, (p) => p.hum, '#3b82f6', getX, getY);
+    // 2. Gas Scaled (Amber)
+    drawSeriesLine(ctx, points, (p) => p.gas, '#f59e0b', getX, getY);
+    // 3. Refrigerator Temp (Teal)
+    drawSeriesLine(ctx, points, (p) => p.temp, '#06b6d4', getX, getY, true);
+  } else {
+    // Weight Series (Green)
+    drawSeriesLine(ctx, points, (p) => p.weight, '#10b981', getX, getY, true);
+  }
+}
+
+function drawSeriesLine(ctx, points, valueSelector, color, getX, getY, drawPoints = false) {
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 2.5;
+  ctx.lineJoin = 'round';
+  ctx.lineCap = 'round';
+  ctx.beginPath();
+
+  points.forEach((p, idx) => {
+    const x = getX(p.time);
+    const y = getY(valueSelector(p));
+    if (idx === 0) ctx.moveTo(x, y);
+    else ctx.lineTo(x, y);
+  });
+  ctx.stroke();
+
+  if (drawPoints) {
+    ctx.fillStyle = color;
+    points.forEach((p) => {
+      const x = getX(p.time);
+      const y = getY(valueSelector(p));
+      ctx.beginPath();
+      ctx.arc(x, y, 3, 0, Math.PI * 2);
+      ctx.fill();
+    });
+  }
+}
+
+// ==========================================
+// 15. DUMMY SIMULATION DEMONSTRATION MODE
+// ==========================================
+function toggleDemoMode() {
+  if (isDemoMode) {
+    stopDemoMode();
+  } else {
+    startDemoMode();
+  }
+}
+
+function startDemoMode() {
+  if (isHardwareConnected) {
+    handleDisconnectESP32();
+  }
+
+  isDemoMode = true;
+  demoTickCount = 0;
+  dom.simulationBanner.classList.remove('hidden');
+  dom.btnDemoLabel.textContent = 'STOP DEMO';
+  dom.btnDemoMode.classList.add('btn-primary');
+  setDataSourceMode('SIMULATED');
+
+  logTerminal('SYSTEM', 'STARTING DEMO SIMULATION MODE: Generating gradual illustrative telemetry.', 'terminal-warning');
+
+  // Initial Seed Telemetry
+  updateSimulatedTick();
+
+  // Run simulation loop every 1000ms
+  if (demoTimer) clearInterval(demoTimer);
+  demoTimer = setInterval(updateSimulatedTick, 1000);
+}
+
+function stopDemoMode() {
+  isDemoMode = false;
+  if (demoTimer) {
+    clearInterval(demoTimer);
+    demoTimer = null;
+  }
+  dom.simulationBanner.classList.add('hidden');
+  dom.btnDemoLabel.textContent = 'START DEMO';
+  dom.btnDemoMode.classList.remove('btn-primary');
+
+  logTerminal('SYSTEM', 'Demo Simulation Mode stopped.', 'terminal-system');
+  setDataSourceMode('LIVE');
+  resetTelemetryState();
+}
+
+function resetSimulationValues() {
+  demoBaseTemp = 3.6;
+  demoBaseHum = 68.0;
+  demoBaseGas = 1050;
+  demoBaseWeight = 2.85;
+  demoTickCount = 0;
+  updateSimulatedTick();
+  logTerminal('SYSTEM', 'Simulated parameters reset to optimal baseline (3.6°C / 68% / 1050 ADC / 2.85 KG).', 'terminal-system');
+}
+
+function triggerSimulatedTemperatureRise() {
+  demoBaseTemp = 8.5; // Will cross warning into critical threshold
+  logTerminal('SYSTEM', 'Simulating Refrigerator Temperature Rise: Target ~9.2°C to demonstrate Inspect & Remove alerts.', 'terminal-warning');
+}
+
+function updateSimulatedTick() {
+  demoTickCount++;
+
+  // Gentle sine oscillation + minute noise (gradual, no sudden jumps)
+  const tempWave = Math.sin(demoTickCount * 0.15) * 0.25;
+  const humWave = Math.cos(demoTickCount * 0.1) * 0.8;
+  const gasWave = Math.sin(demoTickCount * 0.2) * 25;
+
+  let currentSimTemp = demoBaseTemp + tempWave;
+  // If simulated temp rise was triggered, drift upward gradually
+  if (demoBaseTemp > 7.0 && currentSimTemp < 9.6) {
+    demoBaseTemp += 0.15;
+  }
+
+  const currentSimHum = Math.min(95, Math.max(30, demoBaseHum + humWave));
+  const currentSimGas = Math.round(demoBaseGas + gasWave);
+  const currentSimVolt = (currentSimGas * (3.30 / 4095.0));
+
+  // Weight fluctuates very slightly (+/- 0.01kg)
+  const currentSimWeight = Number((demoBaseWeight + (Math.sin(demoTickCount * 0.08) * 0.02)).toFixed(2));
+
+  currentTelemetry.refrigeratorTemperature = Number(currentSimTemp.toFixed(2));
+  currentTelemetry.environmentHumidity = Number(currentSimHum.toFixed(2));
+  currentTelemetry.environmentTemperature = 27.5 + Number((Math.sin(demoTickCount * 0.05) * 0.3).toFixed(2));
+  currentTelemetry.mq135Raw = currentSimGas;
+  currentTelemetry.mq135Voltage = Number(currentSimVolt.toFixed(2));
+  currentTelemetry.trayWeightKg = currentSimWeight;
+  currentTelemetry.dataSource = 'SIMULATED';
+  currentTelemetry.timestamp = new Date().toISOString();
+
+  packetCount++;
+  dom.packetCounter.textContent = `Packets: ${packetCount} (SIM)`;
+
+  evaluateSystemHealthAndAlerts();
+  updateAllDashboardVisuals();
+  recordTelemetryForChart();
+
+  // Structured Serial Log Output
+  logFormattedSerialTelemetry({
+    refrigerator_temperature: currentTelemetry.refrigeratorTemperature,
+    environment_humidity: currentTelemetry.environmentHumidity,
+    environment_temperature: currentTelemetry.environmentTemperature,
+    mq135_raw: currentTelemetry.mq135Raw,
+    mq135_voltage: currentTelemetry.mq135Voltage,
+    weight_kg: currentTelemetry.trayWeightKg,
+    status: 'SIMULATED'
+  });
+}
+
+// ==========================================
+// 16. SETTINGS MODAL & THRESHOLDS
+// ==========================================
+function openSettingsModal() {
+  dom.inputTempWarning.value = thresholds.tempWarning;
+  dom.inputTempCritical.value = thresholds.tempCritical;
+  dom.inputMq135Warning.value = thresholds.mq135Warning;
+  dom.inputMq135Critical.value = thresholds.mq135Critical;
+  dom.inputSnapshotInterval.value = thresholds.snapshotIntervalSec || 10;
+  dom.settingsModal.classList.remove('hidden');
+}
+
+function closeSettingsModal() {
+  dom.settingsModal.classList.add('hidden');
+}
+
+function handleSettingsFormSubmit(e) {
+  e.preventDefault();
+  thresholds.tempWarning = parseFloat(dom.inputTempWarning.value) || DEFAULT_THRESHOLDS.tempWarning;
+  thresholds.tempCritical = parseFloat(dom.inputTempCritical.value) || DEFAULT_THRESHOLDS.tempCritical;
+  thresholds.mq135Warning = parseInt(dom.inputMq135Warning.value, 10) || DEFAULT_THRESHOLDS.mq135Warning;
+  thresholds.mq135Critical = parseInt(dom.inputMq135Critical.value, 10) || DEFAULT_THRESHOLDS.mq135Critical;
+  thresholds.snapshotIntervalSec = parseInt(dom.inputSnapshotInterval.value, 10) || DEFAULT_THRESHOLDS.snapshotIntervalSec;
+
+  saveSettings();
+  startSnapshotScheduler();
+  closeSettingsModal();
+  logTerminal('SYSTEM', 'Configurable thresholds and snapshot interval updated.', 'terminal-system');
+
+  evaluateSystemHealthAndAlerts();
+  updateAllDashboardVisuals();
+}
+
+function handleResetThresholds() {
+  thresholds = { ...DEFAULT_THRESHOLDS };
+  dom.inputTempWarning.value = thresholds.tempWarning;
+  dom.inputTempCritical.value = thresholds.tempCritical;
+  dom.inputMq135Warning.value = thresholds.mq135Warning;
+  dom.inputMq135Critical.value = thresholds.mq135Critical;
+  dom.inputSnapshotInterval.value = thresholds.snapshotIntervalSec;
+
+  saveSettings();
+  startSnapshotScheduler();
+  closeSettingsModal();
+  logTerminal('SYSTEM', 'Thresholds reset to factory demonstration defaults.', 'terminal-system');
+
+  evaluateSystemHealthAndAlerts();
+  updateAllDashboardVisuals();
+}
+
+// ==========================================
+// 17. FORMATTED SERIAL TELEMETRY LOGGING
 // ==========================================
 function logFormattedSerialTelemetry(data) {
   const time = getTimestamp();
-
-  // Create human-readable serial logs matching section 12 requirement
   let linesHtml = '';
 
   if (data.environment_temperature !== null && data.environment_humidity !== null) {
-    linesHtml += `<div class="terminal-line terminal-reading"><span class="t-time">[${time}]</span> <span class="t-msg"><span class="t-param">Environment Temperature:</span> <span class="t-val">${Number(data.environment_temperature).toFixed(2)} °C</span></span></div>`;
-    linesHtml += `<div class="terminal-line terminal-reading"><span class="t-time">[${time}]</span> <span class="t-msg"><span class="t-param">Environment Humidity:</span> <span class="t-val">${Number(data.environment_humidity).toFixed(2)} %</span></span></div>`;
+    linesHtml += `<div class="terminal-line"><span class="t-time">[${time}]</span> <span class="t-param">Env Temp:</span> <span class="t-val">${Number(data.environment_temperature).toFixed(2)} °C</span> | <span class="t-param">Humidity:</span> <span class="t-val">${Number(data.environment_humidity).toFixed(2)} %</span></div>`;
   }
 
   if (data.refrigerator_temperature !== null) {
-    linesHtml += `<div class="terminal-line terminal-reading"><span class="t-time">[${time}]</span> <span class="t-msg"><span class="t-param">Refrigerator Temperature:</span> <span class="t-val">${Number(data.refrigerator_temperature).toFixed(2)} °C</span></span></div>`;
-  } else {
-    linesHtml += `<div class="terminal-line terminal-error"><span class="t-time">[${time}]</span> <span class="t-msg">Refrigerator Temp Sensor: Disconnected / Error</span></div>`;
+    linesHtml += `<div class="terminal-line"><span class="t-time">[${time}]</span> <span class="t-param">Refrigerator Temp:</span> <span class="t-val">${Number(data.refrigerator_temperature).toFixed(2)} °C</span></div>`;
   }
 
   if (data.mq135_raw !== null) {
-    linesHtml += `<div class="terminal-line terminal-reading"><span class="t-time">[${time}]</span> <span class="t-msg"><span class="t-param">MQ135 Raw:</span> <span class="t-val">${data.mq135_raw}</span> | <span class="t-param">Voltage:</span> <span class="t-val">${Number(data.mq135_voltage || 0).toFixed(2)} V</span></span></div>`;
+    linesHtml += `<div class="terminal-line"><span class="t-time">[${time}]</span> <span class="t-param">MQ135 Gas:</span> <span class="t-val">${data.mq135_raw}</span> (${Number(data.mq135_voltage || 0).toFixed(2)} V)</div>`;
   }
 
-  // Strictly formatted weight in KG (Never raw HX711!)
   if (data.weight_kg !== null) {
-    linesHtml += `<div class="terminal-line terminal-reading"><span class="t-time">[${time}]</span> <span class="t-msg"><span class="t-param">Tray Weight:</span> <span class="t-val">${Number(data.weight_kg).toFixed(2)} KG</span></span></div>`;
-  } else {
-    linesHtml += `<div class="terminal-line terminal-error"><span class="t-time">[${time}]</span> <span class="t-msg">Load Cell Status: Error / Not Ready</span></div>`;
+    linesHtml += `<div class="terminal-line"><span class="t-time">[${time}]</span> <span class="t-param">Tray Weight:</span> <span class="t-val">${Number(data.weight_kg).toFixed(2)} KG</span></div>`;
   }
 
   appendTerminalHtml(linesHtml);
@@ -630,54 +2027,35 @@ function logFormattedSerialTelemetry(data) {
 
 function logTerminal(prefix, message, typeClass = 'terminal-system') {
   const time = getTimestamp();
-  const html = `<div class="terminal-line ${typeClass}"><span class="t-time">[${time}]</span> <span class="t-msg">${message}</span></div>`;
+  const html = `<div class="terminal-line ${typeClass}"><span class="t-time">[${time}]</span> <span class="t-msg">${escapeHtml(message)}</span></div>`;
   appendTerminalHtml(html);
 }
 
 function appendTerminalHtml(html) {
-  el.serialTerminal.insertAdjacentHTML('beforeend', html);
+  if (!dom.serialTerminal) return;
+  dom.serialTerminal.insertAdjacentHTML('beforeend', html);
 
-  // Buffer management: prune older entries if terminal exceeds 150 items
-  while (el.serialTerminal.children.length > 150) {
-    el.serialTerminal.removeChild(el.serialTerminal.firstElementChild);
+  // Keep buffer size limited to 150 items
+  while (dom.serialTerminal.children.length > 150) {
+    dom.serialTerminal.removeChild(dom.serialTerminal.firstElementChild);
   }
 
-  if (el.chkAutoscroll.checked) {
-    el.serialTerminal.scrollTop = el.serialTerminal.scrollHeight;
+  if (dom.chkAutoscroll && dom.chkAutoscroll.checked) {
+    dom.serialTerminal.scrollTop = dom.serialTerminal.scrollHeight;
   }
 }
 
 function getTimestamp() {
   const d = new Date();
-  return d.toTimeString().split(' ')[0]; // "HH:MM:SS"
+  return d.toTimeString().split(' ')[0];
 }
 
-// Reset values when disconnected
-function resetDashboardReadings() {
-  el.valEnvTemp.textContent = '--';
-  el.valEnvHum.textContent = '--';
-  el.valTrayTemp.textContent = '--';
-  el.valMq135Raw.textContent = '--';
-  el.valMq135Voltage.textContent = '--';
-  el.valTrayWeight.textContent = '--';
-
-  setCardBadge(el.envStatusBadge, 'Disconnected', 'status-badge-error');
-  setCardBadge(el.trayTempStatusBadge, 'Disconnected', 'status-badge-error');
-  setCardBadge(el.gasStatusBadge, 'Disconnected', 'status-badge-error');
-  setCardBadge(el.weightStatusBadge, 'Disconnected', 'status-badge-error');
-
-  consecutiveGasCritical = 0;
-  consecutiveTempCritical = 0;
-  currentEmergencyState = 'NORMAL';
-
-  el.alertPanel.className = 'alert-panel alert-panel-normal';
-  el.alertIconNormal.classList.remove('hidden');
-  el.alertIconEmergency.classList.add('hidden');
-  el.alertTitle.textContent = 'SYSTEM STATUS: ESP32 DISCONNECTED';
-  el.alertLevelBadge.className = 'alert-level-badge level-normal';
-  el.alertLevelBadge.textContent = 'IDLE';
-  el.alertDescription.textContent =
-    'Connect ESP32 via USB and click "CONNECT ESP32" to begin live monitoring.';
-  el.alertParameterDetail.textContent = 'Awaiting USB Serial Telemetry';
-  el.alertTimestamp.textContent = `Status: Standby`;
+function escapeHtml(str) {
+  if (!str) return '';
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
 }
