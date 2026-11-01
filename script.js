@@ -156,6 +156,26 @@ const dom = {
   acrylicHum: document.getElementById('acrylic-hum'),
   acrylicWeight: document.getElementById('acrylic-weight'),
 
+  // Module 1: 3D Cold-Room Interactive Viewport & HUD Elements
+  twin3dWrapper: document.getElementById('twin-3d-wrapper'),
+  twin2dWrapper: document.getElementById('twin-2d-wrapper'),
+  btnView3d: document.getElementById('btn-view-3d'),
+  btnView2d: document.getElementById('btn-view-2d'),
+  twinLiveSimBadge: document.getElementById('twin-live-sim-badge'),
+  hudCardController: document.getElementById('hud-card-controller'),
+  hudControllerStatus: document.getElementById('hud-controller-status'),
+  hudTempVal: document.getElementById('hud-temp-val'),
+  hudHumVal: document.getElementById('hud-hum-val'),
+  hudGasVal: document.getElementById('hud-gas-val'),
+  hudWeightVal: document.getElementById('hud-weight-val'),
+  threejsViewport: document.getElementById('threejs-viewport'),
+  threejsLabelsLayer: document.getElementById('threejs-labels-layer'),
+  floatingShelfNode: document.getElementById('floating-shelf-node'),
+  nodeTempVal: document.getElementById('node-temp-val'),
+  nodeHumVal: document.getElementById('node-hum-val'),
+  nodeGasVal: document.getElementById('node-gas-val'),
+  nodeWeightVal: document.getElementById('node-weight-val'),
+
   // Module 2: Monitoring Cards
   valTrayTemp: document.getElementById('val-tray-temp'),
   trayTempStatusBadge: document.getElementById('tray-temp-status-badge'),
@@ -276,6 +296,9 @@ document.addEventListener('DOMContentLoaded', async () => {
   checkWebSerialSupport();
   resetTelemetryState();
 
+  // Initialize Interactive 3D Cold-Room Digital Twin
+  initThreeJsColdRoom();
+
   // Initialize Canvas Chart
   initCanvasChart();
 
@@ -392,7 +415,8 @@ function switchPage(pageId) {
   } else if (pageId === 'history') {
     loadHistoricalRecordsView();
   } else if (pageId === 'digital-twin') {
-    renderDigitalTwinTray();
+    updateDigitalTwinVisuals();
+    setTimeout(() => handleThreeResize(), 60);
   } else if (pageId === 'monitoring') {
     requestAnimationFrame(renderTelemetryChart);
   }
@@ -416,7 +440,7 @@ async function setupFirebaseIntegration() {
     updateInventoryCounts();
     renderProductsTable();
     renderRiskAnalysisModule();
-    renderDigitalTwinTray();
+    updateDigitalTwinVisuals();
   });
 }
 
@@ -454,6 +478,19 @@ function setupEventListeners() {
   dom.btnSimStop.addEventListener('click', stopDemoMode);
   dom.btnSimReset.addEventListener('click', resetSimulationValues);
   dom.btnSimTempRise.addEventListener('click', triggerSimulatedTemperatureRise);
+
+  // Digital Twin View Mode Toggles (3D vs 2D)
+  if (dom.btnView3d) {
+    dom.btnView3d.addEventListener('click', () => setDigitalTwinViewMode('3D'));
+  }
+  if (dom.btnView2d) {
+    dom.btnView2d.addEventListener('click', () => setDigitalTwinViewMode('2D'));
+  }
+
+  // Window Resize Listener for 3D Viewport
+  window.addEventListener('resize', () => {
+    handleThreeResize();
+  });
 
   // Chart Controls
   dom.btnChartModeEnv.addEventListener('click', () => setChartMode('env'));
@@ -938,6 +975,14 @@ function updateAllDashboardVisuals() {
     dom.twinTrayGaugeText.textContent = '0.00 / 5.00 KG';
   }
 
+  // --- 3D Digital Twin HUD & Shelf Node Metrics ---
+  update3DDigitalTwinHUD(
+    tempValid ? temp : null,
+    humValid ? hum : null,
+    gasValid ? gasRaw : null,
+    weightValid ? weight : null
+  );
+
   // --- 2. Monitoring Module Cards ---
   // Temperature
   if (tempValid) {
@@ -1018,7 +1063,1010 @@ function resetTelemetryState() {
 }
 
 // ==========================================
-// 9. DIGITAL TWIN REFRIGERATOR TRAY MODULE
+// 9. INTERACTIVE 3D COLD-ROOM DIGITAL TWIN
+// ==========================================
+const threeState = {
+  initialized: false,
+  initAttempts: 0,
+  scene: null,
+  camera: null,
+  renderer: null,
+  controls: null,
+  animFrameId: null,
+  evaporatorFan: null,
+  shelfNodeAnchor: null,
+  shelfLedMesh: null,
+  productGroup: null,
+  pendingProducts: null,
+  halos: [],
+  productAnchors: [],
+  interactiveMeshes: [],
+  hoveredMesh: null,
+  originalEmissive: null,
+  is3dActive: true
+};
+
+let initRetryTimer = null;
+
+function setDigitalTwinViewMode(mode) {
+  if (mode === '3D') {
+    threeState.is3dActive = true;
+    if (dom.btnView3d) dom.btnView3d.classList.add('active');
+    if (dom.btnView2d) dom.btnView2d.classList.remove('active');
+    if (dom.twin3dWrapper) dom.twin3dWrapper.classList.remove('hidden');
+    if (dom.twin2dWrapper) dom.twin2dWrapper.classList.add('hidden');
+    if (!threeState.initialized) {
+      initThreeJsColdRoom();
+    } else {
+      setTimeout(() => handleThreeResize(), 50);
+    }
+  } else {
+    threeState.is3dActive = false;
+    if (dom.btnView2d) dom.btnView2d.classList.add('active');
+    if (dom.btnView3d) dom.btnView3d.classList.remove('active');
+    if (dom.twin2dWrapper) dom.twin2dWrapper.classList.remove('hidden');
+    if (dom.twin3dWrapper) dom.twin3dWrapper.classList.add('hidden');
+    renderDigitalTwinTray();
+  }
+}
+
+function update3DDigitalTwinHUD(temp, hum, gas, weight) {
+  // Floating Top Right HUD Card
+  if (dom.hudTempVal) dom.hudTempVal.textContent = temp !== null ? `${Number(temp).toFixed(1)}°C` : '--°C';
+  if (dom.hudHumVal) dom.hudHumVal.textContent = hum !== null ? `${Math.round(hum)}%` : '--%';
+  if (dom.hudGasVal) dom.hudGasVal.textContent = gas !== null ? `${gas} ppm` : '-- ppm';
+  if (dom.hudWeightVal) dom.hudWeightVal.textContent = weight !== null ? `${Number(weight).toFixed(1)} kg` : '-- kg';
+
+  // On-Shelf Telemetry Tag
+  if (dom.nodeTempVal) dom.nodeTempVal.textContent = temp !== null ? `${Number(temp).toFixed(1)}°C` : '--°C';
+  if (dom.nodeHumVal) dom.nodeHumVal.textContent = hum !== null ? `${Math.round(hum)}%` : '--%';
+  if (dom.nodeGasVal) dom.nodeGasVal.textContent = gas !== null ? `${gas} ppm` : '-- ppm';
+  if (dom.nodeWeightVal) dom.nodeWeightVal.textContent = weight !== null ? `${Number(weight).toFixed(1)} kg` : '-- kg';
+
+  // Floating Top Left Controller Card
+  if (dom.hudControllerStatus) {
+    if (isHardwareConnected) {
+      dom.hudControllerStatus.textContent = 'ESP32 LIVE • PORT ACTIVE (115200 BAUD)';
+    } else if (isDemoMode) {
+      dom.hudControllerStatus.textContent = 'SIMULATION MODE • DEMO TELEMETRY';
+    } else {
+      dom.hudControllerStatus.textContent = 'LOCAL MODEL • NO HARDWARE';
+    }
+  }
+
+  // Live / Sim Badge
+  if (dom.twinLiveSimBadge) {
+    if (isHardwareConnected) {
+      dom.twinLiveSimBadge.className = 'twin-live-badge badge-live';
+      dom.twinLiveSimBadge.textContent = 'ESP32 LIVE';
+    } else if (isDemoMode) {
+      dom.twinLiveSimBadge.className = 'twin-live-badge badge-sim';
+      dom.twinLiveSimBadge.textContent = 'LIVE SIMULATION';
+    } else {
+      dom.twinLiveSimBadge.className = 'twin-live-badge badge-sim';
+      dom.twinLiveSimBadge.textContent = 'STANDBY MODEL';
+    }
+  }
+
+  // Update Status LED on 3D ESP32 Node
+  if (threeState.shelfLedMesh && threeState.shelfLedMesh.material) {
+    if (isHardwareConnected) {
+      threeState.shelfLedMesh.material.color.setHex(0x10b981); // Emerald Green
+    } else if (isDemoMode) {
+      threeState.shelfLedMesh.material.color.setHex(0x00f2fe); // Cyan
+    } else {
+      threeState.shelfLedMesh.material.color.setHex(0x64748b); // Idle Slate
+    }
+  }
+}
+
+function updateDigitalTwinVisuals() {
+  renderDigitalTwinTray();
+  render3DProducts(productsList);
+}
+
+function initThreeJsColdRoom() {
+  if (typeof THREE === 'undefined') {
+    if (threeState.initAttempts < 30) {
+      threeState.initAttempts++;
+      clearTimeout(initRetryTimer);
+      initRetryTimer = setTimeout(initThreeJsColdRoom, 150);
+      return;
+    }
+    console.warn('Three.js library is not available after retries.');
+    return;
+  }
+
+  const viewport = dom.threejsViewport;
+  if (!viewport) return;
+
+  // Remove only previous canvas element if existing
+  const oldCanvas = viewport.querySelector('canvas');
+  if (oldCanvas) oldCanvas.remove();
+
+  const width = viewport.clientWidth || viewport.offsetWidth || 900;
+  const height = viewport.clientHeight || viewport.offsetHeight || 520;
+
+  // Scene & Fog with rich atmospheric refrigeration cold-room color
+  const scene = new THREE.Scene();
+  scene.background = new THREE.Color(0x070e1c);
+  scene.fog = new THREE.FogExp2(0x070e1c, 0.04);
+
+  // Camera
+  const camera = new THREE.PerspectiveCamera(42, width / height, 0.1, 100);
+  camera.position.set(3.4, 2.7, 4.4);
+  camera.lookAt(0, 0.45, 0);
+
+  // Renderer with fallback
+  let renderer;
+  try {
+    renderer = new THREE.WebGLRenderer({
+      antialias: true,
+      alpha: false,
+      powerPreference: 'default'
+    });
+  } catch (err) {
+    console.warn('WebGL default initialization fallback:', err);
+    renderer = new THREE.WebGLRenderer({ antialias: false, alpha: false });
+  }
+
+  renderer.setSize(width, height);
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  renderer.domElement.style.display = 'block';
+  renderer.domElement.style.width = '100%';
+  renderer.domElement.style.height = '100%';
+  renderer.domElement.style.position = 'absolute';
+  renderer.domElement.style.top = '0';
+  renderer.domElement.style.left = '0';
+  renderer.domElement.style.zIndex = '1';
+  viewport.insertBefore(renderer.domElement, viewport.firstChild);
+
+  // OrbitControls
+  let controls = null;
+  if (typeof THREE.OrbitControls !== 'undefined') {
+    controls = new THREE.OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true;
+    controls.dampingFactor = 0.05;
+    controls.minDistance = 1.8;
+    controls.maxDistance = 8.5;
+    controls.maxPolarAngle = Math.PI / 2 + 0.02; // Keep camera above floor
+    controls.target.set(0, 0.45, 0);
+    controls.update();
+  }
+
+  // Lighting Rig
+  const ambientLight = new THREE.AmbientLight(0xdbeafe, 0.9);
+  scene.add(ambientLight);
+
+  const keyLight = new THREE.DirectionalLight(0xffffff, 1.0);
+  keyLight.position.set(4, 7, 5);
+  keyLight.castShadow = true;
+  keyLight.shadow.mapSize.width = 1024;
+  keyLight.shadow.mapSize.height = 1024;
+  keyLight.shadow.camera.near = 0.5;
+  keyLight.shadow.camera.far = 16;
+  keyLight.shadow.camera.left = -3;
+  keyLight.shadow.camera.right = 3;
+  keyLight.shadow.camera.top = 3;
+  keyLight.shadow.camera.bottom = -3;
+  keyLight.shadow.bias = -0.001;
+  scene.add(keyLight);
+
+  // Overhead Neon LED Strip Light (Cold Cyan)
+  const ceilingLight = new THREE.PointLight(0x00f2fe, 1.3, 8);
+  ceilingLight.position.set(0, 2.5, 0);
+  scene.add(ceilingLight);
+
+  // Cool Soft Fill Light
+  const fillLight = new THREE.DirectionalLight(0x0284c7, 0.5);
+  fillLight.position.set(-4, 3, -2);
+  scene.add(fillLight);
+
+  // Build Refrigerator Cold-Room Chamber
+  buildColdRoomChamber(scene);
+
+  // Build Shelving System & Load Tray
+  buildShelvingSystem(scene);
+
+  // Build On-Shelf ESP32 Hardware Twin Node
+  buildShelfTelemetryNode(scene);
+
+  // Product Group for Dynamic 3D Food Items
+  const productGroup = new THREE.Group();
+  scene.add(productGroup);
+
+  // Cache Three.js state
+  threeState.scene = scene;
+  threeState.camera = camera;
+  threeState.renderer = renderer;
+  threeState.controls = controls;
+  threeState.productGroup = productGroup;
+  threeState.initialized = true;
+
+  // Setup Raycasting & Pointer Interactivity
+  setupThreeInteraction(viewport, renderer, camera);
+
+  // Render Initial Products (or any pending products)
+  const itemsToRender = threeState.pendingProducts || productsList;
+  render3DProducts(itemsToRender);
+
+  // Start Animation Render Loop
+  startThreeAnimationLoop();
+
+  // Trigger resize to settle canvas geometry
+  setTimeout(() => handleThreeResize(), 80);
+}
+
+function buildColdRoomChamber(scene) {
+  // Chamber Floor Plate
+  const floorGeo = new THREE.PlaneGeometry(5.2, 4.4);
+  const floorMat = new THREE.MeshStandardMaterial({
+    color: 0x070e1a,
+    metalness: 0.85,
+    roughness: 0.35
+  });
+  const floor = new THREE.Mesh(floorGeo, floorMat);
+  floor.rotation.x = -Math.PI / 2;
+  floor.position.y = 0;
+  floor.receiveShadow = true;
+  scene.add(floor);
+
+  // Cold Air Cyan Floor Grid Helper
+  const grid = new THREE.GridHelper(4.4, 14, 0x00f2fe, 0x1e293b);
+  grid.position.y = 0.002;
+  scene.add(grid);
+
+  // Back Wall (Dark Brushed Stainless Steel Cooling Panel)
+  const backWallGeo = new THREE.BoxGeometry(3.8, 2.6, 0.08);
+  const backWallMat = new THREE.MeshStandardMaterial({
+    color: 0x1e293b,
+    metalness: 0.85,
+    roughness: 0.3
+  });
+  const backWall = new THREE.Mesh(backWallGeo, backWallMat);
+  backWall.position.set(0, 1.35, -1.45);
+  backWall.receiveShadow = true;
+  scene.add(backWall);
+
+  // Horizontal Cooling Fin Slats
+  const finGeo = new THREE.BoxGeometry(3.6, 0.03, 0.04);
+  const finMat = new THREE.MeshStandardMaterial({
+    color: 0x334155,
+    metalness: 0.9,
+    roughness: 0.2
+  });
+  for (let i = 0; i < 5; i++) {
+    const fin = new THREE.Mesh(finGeo, finMat);
+    fin.position.set(0, 0.5 + i * 0.24, -1.40);
+    scene.add(fin);
+  }
+
+  // Evaporator Fan Unit at Upper Center of Back Wall
+  const fanHousingGeo = new THREE.CylinderGeometry(0.36, 0.36, 0.06, 32);
+  const fanHousingMat = new THREE.MeshStandardMaterial({
+    color: 0x0f172a,
+    metalness: 0.9,
+    roughness: 0.2
+  });
+  const fanHousing = new THREE.Mesh(fanHousingGeo, fanHousingMat);
+  fanHousing.rotation.x = Math.PI / 2;
+  fanHousing.position.set(0, 2.05, -1.40);
+  scene.add(fanHousing);
+
+  // Rotating Fan Blades Group
+  const fanGroup = new THREE.Group();
+  fanGroup.position.set(0, 2.05, -1.36);
+
+  const bladeGeo = new THREE.BoxGeometry(0.30, 0.05, 0.01);
+  const bladeMat = new THREE.MeshStandardMaterial({
+    color: 0x00f2fe,
+    metalness: 0.8,
+    roughness: 0.2
+  });
+
+  for (let b = 0; b < 4; b++) {
+    const blade = new THREE.Mesh(bladeGeo, bladeMat);
+    blade.rotation.z = (b * Math.PI) / 4;
+    fanGroup.add(blade);
+  }
+  scene.add(fanGroup);
+  threeState.evaporatorFan = fanGroup;
+
+  // Chamber Ceiling Panel
+  const ceilingGeo = new THREE.BoxGeometry(3.8, 0.08, 2.9);
+  const ceilingMat = new THREE.MeshStandardMaterial({
+    color: 0x0f172a,
+    metalness: 0.8,
+    roughness: 0.4
+  });
+  const ceiling = new THREE.Mesh(ceilingGeo, ceilingMat);
+  ceiling.position.set(0, 2.7, 0);
+  scene.add(ceiling);
+
+  // Overhead Cyan LED Light Strip Bar
+  const neonBarGeo = new THREE.BoxGeometry(2.4, 0.02, 0.16);
+  const neonBarMat = new THREE.MeshBasicMaterial({ color: 0x00f2fe });
+  const neonBar = new THREE.Mesh(neonBarGeo, neonBarMat);
+  neonBar.position.set(0, 2.65, 0);
+  scene.add(neonBar);
+
+  // Side Glass Panels (Frosted Tempered Glass Walls)
+  const glassGeo = new THREE.BoxGeometry(0.04, 2.6, 2.9);
+  const glassMat = new THREE.MeshStandardMaterial({
+    color: 0x0f172a,
+    transparent: true,
+    opacity: 0.32,
+    roughness: 0.15,
+    metalness: 0.9
+  });
+
+  const leftGlass = new THREE.Mesh(glassGeo, glassMat);
+  leftGlass.position.set(-1.9, 1.35, 0);
+  scene.add(leftGlass);
+
+  const rightGlass = new THREE.Mesh(glassGeo, glassMat);
+  rightGlass.position.set(1.9, 1.35, 0);
+  scene.add(rightGlass);
+
+  // 4 Corner Stainless Chrome Columns
+  const postGeo = new THREE.CylinderGeometry(0.035, 0.035, 2.7, 16);
+  const postMat = new THREE.MeshStandardMaterial({
+    color: 0x94a3b8,
+    metalness: 0.95,
+    roughness: 0.15
+  });
+
+  const corners = [
+    [-1.9, 1.35, -1.45],
+    [1.9, 1.35, -1.45],
+    [-1.9, 1.35, 1.45],
+    [1.9, 1.35, 1.45]
+  ];
+
+  corners.forEach(([x, y, z]) => {
+    const col = new THREE.Mesh(postGeo, postMat);
+    col.position.set(x, y, z);
+    col.castShadow = true;
+    scene.add(col);
+  });
+}
+
+function buildShelvingSystem(scene) {
+  // --- PRIMARY LOAD TRAY 01 (Physical Tray with HX711 Load Cell) ---
+  const trayGeo = new THREE.BoxGeometry(3.1, 0.06, 1.9);
+  const trayMat = new THREE.MeshStandardMaterial({
+    color: 0x334155,
+    metalness: 0.85,
+    roughness: 0.25
+  });
+  const tray = new THREE.Mesh(trayGeo, trayMat);
+  tray.position.set(0, 0.20, 0.05);
+  tray.receiveShadow = true;
+  tray.castShadow = true;
+  scene.add(tray);
+
+  // Perimeter Cyan Acrylic Border Guard Rail
+  const railMat = new THREE.MeshStandardMaterial({
+    color: 0x00f2fe,
+    transparent: true,
+    opacity: 0.45,
+    roughness: 0.15
+  });
+
+  // Front Rail
+  const frontRail = new THREE.Mesh(new THREE.BoxGeometry(3.1, 0.08, 0.03), railMat);
+  frontRail.position.set(0, 0.26, 0.99);
+  scene.add(frontRail);
+
+  // Back Rail
+  const backRail = new THREE.Mesh(new THREE.BoxGeometry(3.1, 0.08, 0.03), railMat);
+  backRail.position.set(0, 0.26, -0.89);
+  scene.add(backRail);
+
+  // Left & Right Guard Rails
+  const sideRailGeo = new THREE.BoxGeometry(0.03, 0.08, 1.9);
+  const leftRail = new THREE.Mesh(sideRailGeo, railMat);
+  leftRail.position.set(-1.54, 0.26, 0.05);
+  scene.add(leftRail);
+
+  const rightRail = new THREE.Mesh(sideRailGeo, railMat);
+  rightRail.position.set(1.54, 0.26, 0.05);
+  scene.add(rightRail);
+
+  // 4 Chrome Legs Connecting Tray to Chamber Floor
+  const legGeo = new THREE.CylinderGeometry(0.03, 0.03, 0.20, 16);
+  const legMat = new THREE.MeshStandardMaterial({
+    color: 0x64748b,
+    metalness: 0.9,
+    roughness: 0.2
+  });
+
+  const legOffsets = [
+    [-1.4, 0.10, -0.75],
+    [1.4, 0.10, -0.75],
+    [-1.4, 0.10, 0.85],
+    [1.4, 0.10, 0.85]
+  ];
+
+  legOffsets.forEach(([lx, ly, lz]) => {
+    const leg = new THREE.Mesh(legGeo, legMat);
+    leg.position.set(lx, ly, lz);
+    leg.castShadow = true;
+    scene.add(leg);
+  });
+
+  // --- UPPER SHELF RACK (Secondary Storage Area) ---
+  const upperShelfGeo = new THREE.BoxGeometry(3.1, 0.03, 1.6);
+  const upperShelfMat = new THREE.MeshStandardMaterial({
+    color: 0x1e293b,
+    transparent: true,
+    opacity: 0.65,
+    metalness: 0.8,
+    roughness: 0.2
+  });
+  const upperShelf = new THREE.Mesh(upperShelfGeo, upperShelfMat);
+  upperShelf.position.set(0, 1.45, -0.05);
+  upperShelf.receiveShadow = true;
+  upperShelf.castShadow = true;
+  scene.add(upperShelf);
+
+  // Upper Shelf Front Trim
+  const upperTrim = new THREE.Mesh(
+    new THREE.BoxGeometry(3.1, 0.04, 0.02),
+    new THREE.MeshStandardMaterial({ color: 0x00f2fe, metalness: 0.9, roughness: 0.2 })
+  );
+  upperTrim.position.set(0, 1.45, 0.74);
+  scene.add(upperTrim);
+}
+
+function buildShelfTelemetryNode(scene) {
+  // On-Shelf ESP32 Hardware Twin Microcontroller Unit
+  const nodeGroup = new THREE.Group();
+  nodeGroup.position.set(1.15, 0.25, -0.60);
+
+  // Main Black PCB Enclosure
+  const boxGeo = new THREE.BoxGeometry(0.26, 0.05, 0.18);
+  const boxMat = new THREE.MeshStandardMaterial({
+    color: 0x090d16,
+    metalness: 0.8,
+    roughness: 0.3
+  });
+  const nodeBox = new THREE.Mesh(boxGeo, boxMat);
+  nodeBox.castShadow = true;
+  nodeGroup.add(nodeBox);
+
+  // Gold Pin Header Strip Detail
+  const pinGeo = new THREE.BoxGeometry(0.22, 0.015, 0.03);
+  const pinMat = new THREE.MeshStandardMaterial({
+    color: 0xf59e0b,
+    metalness: 0.9,
+    roughness: 0.2
+  });
+  const pins = new THREE.Mesh(pinGeo, pinMat);
+  pins.position.set(0, 0.028, 0.06);
+  nodeGroup.add(pins);
+
+  // Status Indicator LED on Board
+  const ledGeo = new THREE.SphereGeometry(0.016, 12, 12);
+  const ledMat = new THREE.MeshBasicMaterial({ color: 0x00f2fe });
+  const led = new THREE.Mesh(ledGeo, ledMat);
+  led.position.set(-0.08, 0.03, -0.04);
+  nodeGroup.add(led);
+  threeState.shelfLedMesh = led;
+
+  // Wi-Fi / Radio Antenna Stub
+  const antGeo = new THREE.CylinderGeometry(0.008, 0.008, 0.08, 12);
+  const antMat = new THREE.MeshStandardMaterial({ color: 0x334155, metalness: 0.9 });
+  const ant = new THREE.Mesh(antGeo, antMat);
+  ant.position.set(0.10, 0.05, -0.05);
+  nodeGroup.add(ant);
+
+  scene.add(nodeGroup);
+  threeState.shelfNodeMesh = nodeGroup;
+
+  // Anchor for 2D Screen Projection of the Floating Shelf Card
+  const anchor = new THREE.Object3D();
+  anchor.position.set(1.15, 0.36, -0.60);
+  scene.add(anchor);
+  threeState.shelfNodeAnchor = anchor;
+}
+
+function getProduct3DSlotPosition(index, totalCount) {
+  // Main Load Tray (HX711 platform at Y = 0.23): fits up to 12 items cleanly
+  if (index < 12) {
+    if (totalCount === 1) {
+      return { x: 0, y: 0.23, z: 0.35, shelf: 'lower' };
+    }
+    if (totalCount === 2) {
+      const xs = [-0.60, 0.60];
+      return { x: xs[index], y: 0.23, z: 0.35, shelf: 'lower' };
+    }
+    if (totalCount === 3) {
+      const xs = [-0.85, 0.0, 0.85];
+      return { x: xs[index], y: 0.23, z: 0.35, shelf: 'lower' };
+    }
+    if (totalCount === 4) {
+      const xs = [-1.05, -0.35, 0.35, 1.05];
+      return { x: xs[index], y: 0.23, z: 0.35, shelf: 'lower' };
+    }
+
+    // Grid of 4 columns across 3 rows on the main tray
+    const cols = 4;
+    const row = Math.floor(index / cols); // 0 (front), 1 (mid), 2 (back)
+    const col = index % cols;
+    const x = -1.05 + col * 0.70;
+    const z = 0.55 - row * 0.45;
+    return { x, y: 0.23, z, shelf: 'lower' };
+  } else {
+    // Upper Storage Rack (at Y = 1.47): fits up to 8 items
+    const upperIdx = index - 12;
+    const cols = 4;
+    const row = Math.floor(upperIdx / cols) % 2;
+    const col = upperIdx % cols;
+    const x = -1.05 + col * 0.70;
+    const z = 0.40 - row * 0.45;
+    return { x, y: 1.47, z, shelf: 'upper' };
+  }
+}
+
+function render3DProducts(products) {
+  if (!threeState.initialized || !threeState.productGroup) {
+    threeState.pendingProducts = products;
+    return;
+  }
+
+  // Clear previous product meshes
+  while (threeState.productGroup.children.length > 0) {
+    const child = threeState.productGroup.children[0];
+    threeState.productGroup.remove(child);
+  }
+
+  // Clear 2D projected label elements
+  if (dom.threejsLabelsLayer) {
+    dom.threejsLabelsLayer.innerHTML = '';
+  }
+
+  threeState.productAnchors = [];
+  threeState.halos = [];
+  threeState.interactiveMeshes = [];
+
+  const list = products || [];
+
+  if (list.length === 0) {
+    if (dom.threejsLabelsLayer) {
+      dom.threejsLabelsLayer.innerHTML = `
+        <div class="twin-3d-empty-hint">
+          TRAY IS EMPTY • USE "VIEW INVENTORY" OR DEMO MODE TO STORE PRODUCTS
+        </div>
+      `;
+    }
+    return;
+  }
+
+  const currentTemp = currentTelemetry.refrigeratorTemperature !== null ? Number(currentTelemetry.refrigeratorTemperature) : 4.0;
+  const total = list.length;
+
+  list.forEach((prod, idx) => {
+    const slot = getProduct3DSlotPosition(idx, total);
+    const risk = evaluateProductRisk(prod, currentTemp);
+
+    // Halo Color & Classification
+    let haloColor = 0x00f2fe; // SAFE
+    if (risk.classification === 'REMOVE') haloColor = 0xef4444;
+    else if (risk.classification === 'SELL FIRST') haloColor = 0xf97316;
+    else if (risk.classification === 'INSPECT') haloColor = 0xf59e0b;
+
+    // Glowing Base Halo Disc on Shelf Surface
+    const haloGeo = new THREE.RingGeometry(0.18, 0.28, 32);
+    const haloMat = new THREE.MeshBasicMaterial({
+      color: haloColor,
+      transparent: true,
+      opacity: 0.85,
+      side: THREE.DoubleSide,
+      depthWrite: false
+    });
+    const halo = new THREE.Mesh(haloGeo, haloMat);
+    halo.rotation.x = -Math.PI / 2;
+    halo.position.set(slot.x, slot.y + 0.003, slot.z);
+    threeState.productGroup.add(halo);
+
+    threeState.halos.push({
+      mesh: halo,
+      baseColor: haloColor,
+      isCritical: risk.classification === 'REMOVE'
+    });
+
+    // 3D Product Mesh
+    const productMesh = createProduct3DMesh(prod, risk);
+    productMesh.position.set(slot.x, slot.y, slot.z);
+    productMesh.userData = {
+      productId: prod.id,
+      name: prod.name,
+      category: prod.category
+    };
+
+    threeState.productGroup.add(productMesh);
+    threeState.interactiveMeshes.push(productMesh);
+
+    // Create 2D Projected Floating Tag in DOM Layer
+    if (dom.threejsLabelsLayer) {
+      const tag = document.createElement('div');
+      tag.className = 'twin-3d-tag';
+      tag.setAttribute('data-product-id', prod.id);
+      tag.title = `Click to view ${escapeHtml(prod.name)} details`;
+
+      const qty = prod.quantity ? `${prod.quantity} ×` : '1 ×';
+      tag.innerHTML = `
+        <div class="tag-qty">${qty}</div>
+        <div class="tag-title">${escapeHtml(prod.name)}</div>
+        <div class="tag-sub">${escapeHtml(prod.category || 'Product')}</div>
+      `;
+
+      tag.addEventListener('click', (e) => {
+        e.stopPropagation();
+        openProductViewModal(prod.id);
+      });
+
+      dom.threejsLabelsLayer.appendChild(tag);
+
+      threeState.productAnchors.push({
+        id: prod.id,
+        mesh: productMesh,
+        tagEl: tag
+      });
+    }
+  });
+}
+
+function createProduct3DMesh(prod, risk) {
+  const group = new THREE.Group();
+  const category = (prod.category || '').toLowerCase();
+
+  if (category.includes('milk') || category.includes('dairy')) {
+    // Milk Carton Packaging with Gabled Peaked Cap
+    const cartonGeo = new THREE.BoxGeometry(0.28, 0.44, 0.28);
+    const cartonMat = new THREE.MeshStandardMaterial({
+      color: 0xf8fafc,
+      metalness: 0.1,
+      roughness: 0.3
+    });
+    const carton = new THREE.Mesh(cartonGeo, cartonMat);
+    carton.position.y = 0.22;
+    carton.castShadow = true;
+    carton.receiveShadow = true;
+    group.add(carton);
+
+    // Slanted Top / Gable
+    const topGeo = new THREE.ConeGeometry(0.20, 0.12, 4);
+    const topMat = new THREE.MeshStandardMaterial({ color: 0x0284c7, metalness: 0.2, roughness: 0.3 });
+    const topPart = new THREE.Mesh(topGeo, topMat);
+    topPart.rotation.y = Math.PI / 4;
+    topPart.position.y = 0.50;
+    group.add(topPart);
+
+    // Plastic Twist Cap
+    const capGeo = new THREE.CylinderGeometry(0.035, 0.035, 0.04, 16);
+    const capMat = new THREE.MeshStandardMaterial({ color: 0x38bdf8 });
+    const cap = new THREE.Mesh(capGeo, capMat);
+    cap.position.set(0.06, 0.53, 0);
+    group.add(cap);
+
+  } else if (category.includes('paneer') || category.includes('cheese') || category.includes('tofu')) {
+    // Sealed Vacuum Block (Cream / Ivory)
+    const blockGeo = new THREE.BoxGeometry(0.34, 0.18, 0.34);
+    const blockMat = new THREE.MeshStandardMaterial({
+      color: 0xfef08a,
+      roughness: 0.4,
+      metalness: 0.05
+    });
+    const block = new THREE.Mesh(blockGeo, blockMat);
+    block.position.y = 0.09;
+    block.castShadow = true;
+    block.receiveShadow = true;
+    group.add(block);
+
+    // Transparent Vacuum Film Wrap
+    const filmGeo = new THREE.BoxGeometry(0.36, 0.19, 0.36);
+    const filmMat = new THREE.MeshStandardMaterial({
+      color: 0xffffff,
+      transparent: true,
+      opacity: 0.25,
+      roughness: 0.1
+    });
+    const film = new THREE.Mesh(filmGeo, filmMat);
+    film.position.y = 0.09;
+    group.add(film);
+
+  } else if (category.includes('yogurt') || category.includes('cream')) {
+    // Tapered Yogurt Tub with Foil Lid
+    const tubGeo = new THREE.CylinderGeometry(0.14, 0.10, 0.26, 24);
+    const tubMat = new THREE.MeshStandardMaterial({
+      color: 0x0284c7,
+      roughness: 0.3,
+      metalness: 0.1
+    });
+    const tub = new THREE.Mesh(tubGeo, tubMat);
+    tub.position.y = 0.13;
+    tub.castShadow = true;
+    tub.receiveShadow = true;
+    group.add(tub);
+
+    // Silver Foil Lid
+    const lidGeo = new THREE.CylinderGeometry(0.145, 0.145, 0.015, 24);
+    const lidMat = new THREE.MeshStandardMaterial({
+      color: 0xe2e8f0,
+      metalness: 0.95,
+      roughness: 0.1
+    });
+    const lid = new THREE.Mesh(lidGeo, lidMat);
+    lid.position.y = 0.265;
+    group.add(lid);
+
+  } else if (category.includes('vegetable') || category.includes('fruit') || category.includes('produce')) {
+    // Produce Storage Crate with Organic Produce Inside
+    const crateGeo = new THREE.BoxGeometry(0.44, 0.14, 0.34);
+    const crateMat = new THREE.MeshStandardMaterial({
+      color: 0x15803d,
+      roughness: 0.5,
+      metalness: 0.1
+    });
+    const crate = new THREE.Mesh(crateGeo, crateMat);
+    crate.position.y = 0.07;
+    crate.castShadow = true;
+    crate.receiveShadow = true;
+    group.add(crate);
+
+    // Produce Items (Fresh Spheres inside)
+    const itemMat = new THREE.MeshStandardMaterial({ color: 0x22c55e, roughness: 0.3 });
+    const posOffsets = [
+      [-0.10, 0.14, -0.06],
+      [0.10, 0.14, -0.06],
+      [-0.10, 0.14, 0.06],
+      [0.10, 0.14, 0.06]
+    ];
+    posOffsets.forEach(([px, py, pz]) => {
+      const apple = new THREE.Mesh(new THREE.SphereGeometry(0.055, 12, 12), itemMat);
+      apple.position.set(px, py, pz);
+      group.add(apple);
+    });
+
+  } else if (category.includes('meat') || category.includes('fish') || category.includes('seafood')) {
+    // Refrigerated Sealed Deli Pack
+    const trayGeo = new THREE.BoxGeometry(0.46, 0.10, 0.32);
+    const trayMat = new THREE.MeshStandardMaterial({ color: 0x0f172a, roughness: 0.4 });
+    const deliTray = new THREE.Mesh(trayGeo, trayMat);
+    deliTray.position.y = 0.05;
+    deliTray.castShadow = true;
+    group.add(deliTray);
+
+    // Meat Block inside
+    const meatGeo = new THREE.BoxGeometry(0.40, 0.08, 0.26);
+    const meatMat = new THREE.MeshStandardMaterial({ color: 0xf43f5e, roughness: 0.5 });
+    const meat = new THREE.Mesh(meatGeo, meatMat);
+    meat.position.y = 0.08;
+    group.add(meat);
+
+    // Transparent Cling Wrap Film
+    const wrapGeo = new THREE.BoxGeometry(0.46, 0.02, 0.32);
+    const wrapMat = new THREE.MeshStandardMaterial({
+      color: 0xffffff,
+      transparent: true,
+      opacity: 0.35,
+      roughness: 0.1
+    });
+    const wrap = new THREE.Mesh(wrapGeo, wrapMat);
+    wrap.position.y = 0.12;
+    group.add(wrap);
+
+  } else if (category.includes('juice') || category.includes('beverage') || category.includes('bottle')) {
+    // Glass Juice / Beverage Bottle
+    const bottleBody = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.10, 0.10, 0.34, 20),
+      new THREE.MeshStandardMaterial({ color: 0xf59e0b, transparent: true, opacity: 0.85, roughness: 0.15, metalness: 0.2 })
+    );
+    bottleBody.position.y = 0.17;
+    bottleBody.castShadow = true;
+    group.add(bottleBody);
+
+    // Bottle Neck
+    const neck = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.04, 0.08, 0.10, 16),
+      new THREE.MeshStandardMaterial({ color: 0xf59e0b, transparent: true, opacity: 0.85, roughness: 0.15 })
+    );
+    neck.position.y = 0.38;
+    group.add(neck);
+
+    // Bottle Cap
+    const bottleCap = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.045, 0.045, 0.03, 16),
+      new THREE.MeshStandardMaterial({ color: 0xe2e8f0, metalness: 0.9 })
+    );
+    bottleCap.position.y = 0.44;
+    group.add(bottleCap);
+
+  } else {
+    // General Food Storage Container
+    const boxGeo = new THREE.BoxGeometry(0.40, 0.22, 0.30);
+    const boxMat = new THREE.MeshStandardMaterial({
+      color: 0x38bdf8,
+      roughness: 0.3,
+      metalness: 0.1
+    });
+    const box = new THREE.Mesh(boxGeo, boxMat);
+    box.position.y = 0.11;
+    box.castShadow = true;
+    box.receiveShadow = true;
+    group.add(box);
+
+    // Container Lid
+    const lidGeo = new THREE.BoxGeometry(0.42, 0.03, 0.32);
+    const lidMat = new THREE.MeshStandardMaterial({ color: 0x0369a1, roughness: 0.3 });
+    const lid = new THREE.Mesh(lidGeo, lidMat);
+    lid.position.y = 0.23;
+    group.add(lid);
+  }
+
+  return group;
+}
+
+function setupThreeInteraction(viewport, renderer, camera) {
+  const raycaster = new THREE.Raycaster();
+  const mouse = new THREE.Vector2();
+  let isDragging = false;
+  let downPos = { x: 0, y: 0 };
+
+  viewport.addEventListener('pointerdown', (e) => {
+    isDragging = false;
+    downPos = { x: e.clientX, y: e.clientY };
+  });
+
+  viewport.addEventListener('pointermove', (e) => {
+    const dx = Math.abs(e.clientX - downPos.x);
+    const dy = Math.abs(e.clientY - downPos.y);
+    if (dx > 4 || dy > 4) {
+      isDragging = true;
+    }
+
+    const rect = viewport.getBoundingClientRect();
+    mouse.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+    mouse.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+
+    raycaster.setFromCamera(mouse, camera);
+    const intersects = raycaster.intersectObjects(threeState.interactiveMeshes, true);
+
+    if (intersects.length > 0) {
+      let target = intersects[0].object;
+      while (target && target.parent && !target.userData?.productId && target !== threeState.scene) {
+        target = target.parent;
+      }
+
+      if (target && target.userData && target.userData.productId) {
+        viewport.style.cursor = 'pointer';
+        return;
+      }
+    }
+
+    viewport.style.cursor = 'grab';
+  });
+
+  viewport.addEventListener('pointerup', (e) => {
+    if (isDragging) return;
+
+    const rect = viewport.getBoundingClientRect();
+    mouse.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+    mouse.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+
+    raycaster.setFromCamera(mouse, camera);
+    const intersects = raycaster.intersectObjects(threeState.interactiveMeshes, true);
+
+    if (intersects.length > 0) {
+      let target = intersects[0].object;
+      while (target && target.parent && !target.userData?.productId && target !== threeState.scene) {
+        target = target.parent;
+      }
+
+      if (target && target.userData && target.userData.productId) {
+        openProductViewModal(target.userData.productId);
+      }
+    }
+  });
+}
+
+function handleThreeResize() {
+  if (!threeState.renderer || !threeState.camera || !dom.threejsViewport) return;
+  const viewport = dom.threejsViewport;
+  const width = viewport.clientWidth;
+  const height = viewport.clientHeight || 520;
+  if (width === 0 || height === 0) return;
+
+  threeState.camera.aspect = width / height;
+  threeState.camera.updateProjectionMatrix();
+  threeState.renderer.setSize(width, height);
+}
+
+function startThreeAnimationLoop() {
+  const tempVec = new THREE.Vector3();
+
+  function animate(time) {
+    threeState.animFrameId = requestAnimationFrame(animate);
+
+    // Update Controls
+    if (threeState.controls) {
+      threeState.controls.update();
+    }
+
+    // Rotate Evaporator Fan Blades
+    if (threeState.evaporatorFan) {
+      threeState.evaporatorFan.rotation.z += 0.035;
+    }
+
+    // Halo Breathing Animation
+    threeState.halos.forEach((h, i) => {
+      const pulse = Math.sin(time * 0.003 + i) * 0.15 + 0.85;
+      h.mesh.material.opacity = (h.isCritical ? 0.95 : 0.75) * pulse;
+      if (h.isCritical) {
+        const s = 1 + (pulse - 0.85) * 0.20;
+        h.mesh.scale.set(s, s, 1);
+      }
+    });
+
+    // Project 3D Coordinates to 2D Screen Space for Product Tags
+    const viewport = dom.threejsViewport;
+    if (viewport && threeState.camera && dom.threejsLabelsLayer) {
+      const w = viewport.clientWidth;
+      const h = viewport.clientHeight;
+      const halfW = w / 2;
+      const halfH = h / 2;
+
+      threeState.productAnchors.forEach(({ mesh, tagEl }) => {
+        if (!tagEl || !mesh) return;
+        tempVec.setFromMatrixPosition(mesh.matrixWorld);
+        tempVec.y += 0.42; // Position tag directly above item
+        tempVec.project(threeState.camera);
+
+        if (tempVec.z > 1.0) {
+          tagEl.style.display = 'none';
+        } else {
+          tagEl.style.display = 'flex';
+          const sx = (tempVec.x * halfW) + halfW;
+          const sy = -(tempVec.y * halfH) + halfH;
+          tagEl.style.left = `${sx.toFixed(1)}px`;
+          tagEl.style.top = `${sy.toFixed(1)}px`;
+        }
+      });
+
+      // Project Shelf Node Tag Anchor
+      if (threeState.shelfNodeAnchor && dom.floatingShelfNode) {
+        tempVec.setFromMatrixPosition(threeState.shelfNodeAnchor.matrixWorld);
+        tempVec.project(threeState.camera);
+
+        if (tempVec.z > 1.0) {
+          dom.floatingShelfNode.style.display = 'none';
+        } else {
+          dom.floatingShelfNode.style.display = 'block';
+          const nx = (tempVec.x * halfW) + halfW + 16;
+          const ny = -(tempVec.y * halfH) + halfH - 30;
+          const clampedX = Math.max(12, Math.min(w - 180, nx));
+          const clampedY = Math.max(12, Math.min(h - 150, ny));
+          dom.floatingShelfNode.style.left = `${clampedX.toFixed(1)}px`;
+          dom.floatingShelfNode.style.top = `${clampedY.toFixed(1)}px`;
+          dom.floatingShelfNode.style.right = 'auto';
+        }
+      }
+    }
+
+    if (threeState.renderer && threeState.scene && threeState.camera) {
+      threeState.renderer.render(threeState.scene, threeState.camera);
+    }
+  }
+
+  animate(performance.now());
+}
+
+// ==========================================
+// 10. DIGITAL TWIN REFRIGERATOR TRAY (2D GRID VIEW)
 // ==========================================
 function renderDigitalTwinTray() {
   if (!dom.twinTraySurface) return;

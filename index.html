@@ -12,6 +12,10 @@
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
   
   <link rel="stylesheet" href="style.css">
+  
+  <!-- Three.js & OrbitControls (Local offline-ready high-performance bundles) -->
+  <script src="three.min.js"></script>
+  <script src="OrbitControls.js"></script>
 </head>
 <body class="dark-theme">
 
@@ -252,15 +256,30 @@
       <main class="page-container">
 
         <!-- =====================================================================
-             MODULE 1: DIGITAL TWIN
+             MODULE 1: DIGITAL TWIN (INTERACTIVE 3D COLD-ROOM & TRAY VIEW)
              ===================================================================== -->
         <section id="page-digital-twin" class="page-section active" aria-labelledby="twin-heading">
           <div class="section-title-wrap">
             <div>
-              <h2 id="twin-heading" class="section-title">Digital Twin Refrigerator Tray Overview</h2>
-              <p class="section-desc">Single-tray real-time physical digital twin with product position tracking and sensor telemetry.</p>
+              <h2 id="twin-heading" class="section-title">Cold-room digital twin</h2>
+              <p class="section-desc">Interactive 3D view &bull; select any stored item</p>
             </div>
             <div class="section-actions">
+              <div class="view-mode-toggle-group">
+                <button id="btn-view-3d" class="btn btn-sm btn-secondary active" type="button">
+                  <svg class="btn-icon-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/></svg>
+                  3D View
+                </button>
+                <button id="btn-view-2d" class="btn btn-sm btn-secondary" type="button">
+                  <svg class="btn-icon-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
+                  2D Grid
+                </button>
+              </div>
+
+              <div id="twin-live-sim-badge" class="twin-live-badge badge-sim">
+                LIVE SIMULATION
+              </div>
+
               <button class="btn btn-secondary btn-nav-action" data-target="monitoring">
                 <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 12A10 10 0 1 0 12 22"/><path d="M12 12l5-5"/></svg>
                 VIEW READINGS
@@ -272,8 +291,119 @@
             </div>
           </div>
 
+          <!-- INTERACTIVE 3D COLD-ROOM SCENE CARD -->
+          <div id="twin-3d-wrapper" class="twin-3d-card">
+            
+            <!-- Top Floating Left HUD Card -->
+            <div class="hud-card hud-left" id="hud-card-controller">
+              <div class="hud-kicker">ESP32 &bull; CONTROLLER</div>
+              <div class="hud-sub" id="hud-controller-status">LOCAL MODEL &bull; NO HARDWARE</div>
+            </div>
+
+            <!-- Top Floating Right HUD Card -->
+            <div class="hud-card hud-right" id="hud-card-telemetry">
+              <div class="hud-telemetry-line">TEMP <strong id="hud-temp-val">--°C</strong></div>
+              <div class="hud-telemetry-line">HUMIDITY <strong id="hud-hum-val">--%</strong></div>
+              <div class="hud-telemetry-line">GAS <strong id="hud-gas-val">-- ppm</strong> &bull; WEIGHT <strong id="hud-weight-val">-- kg</strong></div>
+            </div>
+
+            <!-- Floating Camera SIM Badge -->
+            <div class="hud-camera-tag">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="camera-icon">
+                <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/>
+                <circle cx="12" cy="13" r="4"/>
+              </svg>
+              <span>CAMERA SIM</span>
+            </div>
+
+            <!-- Three.js Canvas Mount Container & 3D Projected Labels Overlay Layer -->
+            <div id="threejs-viewport" class="threejs-viewport" role="region" aria-label="Interactive 3D Refrigerator Cold-Room Digital Twin">
+              <div id="threejs-labels-layer" class="threejs-labels-layer"></div>
+            </div>
+
+            <!-- On-Shelf Sensor Node Floating Tag -->
+            <div id="floating-shelf-node" class="floating-shelf-node">
+              <div class="shelf-node-header">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="chip-svg"><rect x="4" y="4" width="16" height="16" rx="2"/><rect x="9" y="9" width="6" height="6"/><line x1="9" y1="1" x2="9" y2="4"/><line x1="15" y1="1" x2="15" y2="4"/><line x1="9" y1="20" x2="9" y2="23"/><line x1="15" y1="20" x2="15" y2="23"/><line x1="20" y1="9" x2="23" y2="9"/><line x1="20" y1="14" x2="23" y2="14"/><line x1="1" y1="9" x2="4" y2="9"/><line x1="1" y1="14" x2="4" y2="14"/></svg>
+                <span>ESP32 LOCAL</span>
+              </div>
+              <div class="shelf-node-body">
+                <div class="node-metric-row"><span class="metric-icon">🌡</span> TEMP <strong id="node-temp-val">--°C</strong></div>
+                <div class="node-metric-row"><span class="metric-icon">💧</span> HUMIDITY <strong id="node-hum-val">--%</strong></div>
+                <div class="node-metric-row"><span class="metric-icon">💨</span> GAS <strong id="node-gas-val">-- ppm</strong></div>
+                <div class="node-metric-row"><span class="metric-icon">⚖</span> WEIGHT <strong id="node-weight-val">-- kg</strong></div>
+              </div>
+            </div>
+
+            <!-- 3D Orbit Interaction Controls Hint -->
+            <div class="twin-3d-instructions">
+              DRAG TO ORBIT &bull; SCROLL TO ZOOM &bull; CLICK PRODUCT TO INSPECT
+            </div>
+
+            <!-- Bottom Status Legend Bar -->
+            <div class="twin-3d-legend-bar">
+              <div class="legend-items-left">
+                <span class="legend-bullet bullet-safe"><span class="dot"></span> Within range</span>
+                <span class="legend-bullet bullet-review"><span class="dot"></span> Review</span>
+                <span class="legend-bullet bullet-priority"><span class="dot"></span> Priority</span>
+              </div>
+              <div class="legend-items-right">
+                <span>Camera view &bull; simulated component</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- 2D TRAY CONTAINER (Toggleable View) -->
+          <div id="twin-2d-wrapper" class="twin-compartment-container hidden">
+            <div class="compartment-frame">
+              <div class="refrigerator-roof">
+                <div class="cooling-vents">
+                  <span></span><span></span><span></span><span></span><span></span>
+                </div>
+                <div class="ambient-glow" id="refrigerator-ambient-glow"></div>
+                <div class="compartment-badge">REFRIGERATOR CHAMBER &bull; 2D LOAD TRAY BREAKDOWN</div>
+              </div>
+
+              <div class="digital-tray-box" id="digital-tray-box">
+                <div class="tray-rails tray-rail-left"></div>
+                <div class="tray-rails tray-rail-right"></div>
+                
+                <div class="tray-lip-header">
+                  <div class="tray-title-row">
+                    <div class="tray-id-badge">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="mini-icon"><rect x="3" y="3" width="18" height="18" rx="2"/></svg>
+                      <span>PHYSICAL TRAY 01 (5KG CAPACITY)</span>
+                    </div>
+                    <div class="tray-load-gauge">
+                      <span class="gauge-label">Tray Load:</span>
+                      <div class="gauge-track">
+                        <div class="gauge-fill" id="twin-tray-gauge-fill" style="width: 0%;"></div>
+                      </div>
+                      <span class="gauge-text" id="twin-tray-gauge-text">0.00 / 5.00 KG</span>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="tray-surface" id="twin-tray-surface">
+                  <div class="tray-loading-placeholder">Loading tray inventory digital twin...</div>
+                </div>
+
+                <div class="tray-front-acrylic">
+                  <div class="acrylic-spec">TRAYVANTA SMART LOAD TRAY &bull; SENSOR-INSTRUMENTED</div>
+                  <div class="acrylic-telemetry">
+                    <span>Temp: <strong id="acrylic-temp">--°C</strong></span>
+                    <span class="divider">&bull;</span>
+                    <span>Humidity: <strong id="acrylic-hum">--%</strong></span>
+                    <span class="divider">&bull;</span>
+                    <span>Weight: <strong id="acrylic-weight">-- KG</strong></span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
           <!-- TOP SUMMARY CARDS (4 Cards) -->
-          <div class="summary-cards-grid">
+          <div class="summary-cards-grid" style="margin-top: 24px;">
             <!-- Card 1: Refrigerator Temperature -->
             <div class="summary-card" id="twin-card-temp">
               <div class="summary-card-header">
@@ -334,67 +464,6 @@
               <div class="summary-card-footer">
                 <span class="footer-title">Atmospheric Air Quality</span>
                 <span class="footer-sub" id="twin-mq135-sub">MQ135 Gas: -- ADC</span>
-              </div>
-            </div>
-          </div>
-
-          <!-- DIGITAL TWIN GRAPHICAL REFRIGERATOR TRAY REPRESENTATION -->
-          <div class="twin-compartment-container">
-            <div class="compartment-frame">
-              <!-- Refrigerator Top Cooling Vent & Ambient Lighting -->
-              <div class="refrigerator-roof">
-                <div class="cooling-vents">
-                  <span></span><span></span><span></span><span></span><span></span>
-                </div>
-                <div class="ambient-glow" id="refrigerator-ambient-glow"></div>
-                <div class="compartment-badge">REFRIGERATOR CHAMBER • ZONE 01</div>
-              </div>
-
-              <!-- Refrigerator Digital Twin Tray Box -->
-              <div class="digital-tray-box" id="digital-tray-box">
-                <div class="tray-rails tray-rail-left"></div>
-                <div class="tray-rails tray-rail-right"></div>
-                
-                <div class="tray-lip-header">
-                  <div class="tray-title-row">
-                    <div class="tray-id-badge">
-                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="mini-icon"><rect x="3" y="3" width="18" height="18" rx="2"/></svg>
-                      <span>PHYSICAL TRAY 01 (5KG CAPACITY)</span>
-                    </div>
-                    <div class="tray-load-gauge">
-                      <span class="gauge-label">Tray Load:</span>
-                      <div class="gauge-track">
-                        <div class="gauge-fill" id="twin-tray-gauge-fill" style="width: 0%;"></div>
-                      </div>
-                      <span class="gauge-text" id="twin-tray-gauge-text">0.00 / 5.00 KG</span>
-                    </div>
-                  </div>
-                </div>
-
-                <!-- Stored Products Visualization Inside Tray -->
-                <div class="tray-surface" id="twin-tray-surface">
-                  <!-- Populated dynamically via JS -->
-                  <div class="tray-loading-placeholder">Loading tray inventory digital twin...</div>
-                </div>
-
-                <!-- Tray Front Lip & Status Footer -->
-                <div class="tray-front-acrylic">
-                  <div class="acrylic-spec">TRAYVANTA SMART LOAD TRAY • SENSOR-INSTRUMENTED</div>
-                  <div class="acrylic-telemetry">
-                    <span>Temp: <strong id="acrylic-temp">--°C</strong></span>
-                    <span class="divider">•</span>
-                    <span>Humidity: <strong id="acrylic-hum">--%</strong></span>
-                    <span class="divider">•</span>
-                    <span>Weight: <strong id="acrylic-weight">-- KG</strong></span>
-                  </div>
-                </div>
-              </div>
-
-              <!-- Air Flow Micro-Animation -->
-              <div class="cold-air-convection">
-                <div class="air-particle p1"></div>
-                <div class="air-particle p2"></div>
-                <div class="air-particle p3"></div>
               </div>
             </div>
           </div>
