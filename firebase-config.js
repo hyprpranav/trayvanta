@@ -10,12 +10,12 @@
  */
 
 export const firebaseConfig = {
-  apiKey: "YOUR_API_KEY",
-  authDomain: "YOUR_PROJECT_ID.firebaseapp.com",
-  projectId: "YOUR_PROJECT_ID",
-  storageBucket: "YOUR_PROJECT_ID.appspot.com",
-  messagingSenderId: "YOUR_MESSAGING_SENDER_ID",
-  appId: "YOUR_APP_ID"
+  apiKey: "AIzaSyBIfHaamcSGNIQLUH2-ThM_r0uJCIWbiL8",
+  authDomain: "trayvanta.firebaseapp.com",
+  projectId: "trayvanta",
+  storageBucket: "trayvanta.firebasestorage.app",
+  messagingSenderId: "333464902909",
+  appId: "1:333464902909:web:c9f51516656d50b082f294"
 };
 
 /**
