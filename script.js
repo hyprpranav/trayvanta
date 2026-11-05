@@ -123,6 +123,8 @@ const dom = {
   btnDemoMode: document.getElementById('btn-demo-mode'),
   btnDemoLabel: document.getElementById('btn-demo-label'),
   btnSettings: document.getElementById('btn-settings'),
+  btnSettingsThresholds: document.getElementById('btn-settings-thresholds'),
+  themeOptions: document.querySelectorAll('[data-theme-option]'),
 
   // Simulation Banner
   simulationBanner: document.getElementById('simulation-banner'),
@@ -291,6 +293,7 @@ const dom = {
 // ==========================================
 document.addEventListener('DOMContentLoaded', async () => {
   loadSavedSettings();
+  loadSavedTheme();
   setupNavigation();
   setupEventListeners();
   checkWebSerialSupport();
@@ -319,6 +322,30 @@ function loadSavedSettings() {
     console.warn('Could not load thresholds from localStorage:', e);
   }
   updateThresholdDisplayHints();
+}
+
+function loadSavedTheme() {
+  const savedTheme = localStorage.getItem('trayvanta_theme') || 'default';
+  applyTheme(savedTheme);
+}
+
+function applyTheme(theme) {
+  const validThemes = ['default', 'midnight', 'light', 'ocean', 'forest'];
+  const selectedTheme = validThemes.includes(theme) ? theme : 'default';
+  document.body.dataset.theme = selectedTheme;
+  dom.themeOptions.forEach((option) => {
+    const isSelected = option.getAttribute('data-theme-option') === selectedTheme;
+    option.setAttribute('aria-checked', String(isSelected));
+  });
+  localStorage.setItem('trayvanta_theme', selectedTheme);
+}
+
+function setupThemeControls() {
+  dom.themeOptions.forEach((option) => {
+    option.addEventListener('click', () => {
+      applyTheme(option.getAttribute('data-theme-option'));
+    });
+  });
 }
 
 function saveSettings() {
@@ -405,7 +432,8 @@ function switchPage(pageId) {
     'monitoring': 'Live Monitoring',
     'products': 'Inventory & Products',
     'risk-analysis': 'Risk Analysis',
-    'history': 'History & Export'
+    'history': 'History & Export',
+    'settings': 'Settings'
   };
   dom.headerPageTitle.textContent = titles[pageId] || 'Dashboard';
 
@@ -548,12 +576,14 @@ function setupEventListeners() {
 
   // Settings Modal Handlers
   dom.btnSettings.addEventListener('click', openSettingsModal);
+  dom.btnSettingsThresholds.addEventListener('click', openSettingsModal);
   dom.btnCloseModal.addEventListener('click', closeSettingsModal);
   dom.settingsModal.addEventListener('click', (e) => {
     if (e.target === dom.settingsModal) closeSettingsModal();
   });
   dom.settingsForm.addEventListener('submit', handleSettingsFormSubmit);
   dom.btnResetThresholds.addEventListener('click', handleResetThresholds);
+  setupThemeControls();
 
   // Physical Cable Removal Event
   if ('serial' in navigator) {

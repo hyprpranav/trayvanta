@@ -17,7 +17,7 @@
   <script src="three.min.js"></script>
   <script src="OrbitControls.js"></script>
 </head>
-<body class="dark-theme">
+<body class="dark-theme" data-theme="default">
 
   <!-- Mobile Navigation Overlay Backdrop -->
   <div id="sidebar-backdrop" class="sidebar-backdrop hidden"></div>
@@ -115,6 +115,16 @@
             <polyline points="12 6 12 12 16 14"/>
           </svg>
           <span class="nav-label">History & Export</span>
+        </button>
+
+        <div class="nav-section-label nav-section-settings">PREFERENCES</div>
+
+        <button class="nav-item" data-page="settings" id="nav-settings">
+          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+            <circle cx="12" cy="12" r="3"/>
+            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.6 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09A1.65 1.65 0 0 0 15 4.6a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09A1.65 1.65 0 0 0 19.4 15z"/>
+          </svg>
+          <span class="nav-label">Settings</span>
         </button>
       </nav>
 
@@ -1120,6 +1130,59 @@
             <div class="table-pagination-footer">
               <span id="history-showing-label">Showing latest records</span>
               <button id="btn-load-more-history" class="btn btn-sm btn-secondary">Load Older Snapshots</button>
+            </div>
+          </div>
+        </section>
+
+        <!-- =====================================================================
+             SETTINGS & APPEARANCE
+             ===================================================================== -->
+        <section id="page-settings" class="page-section" aria-labelledby="settings-heading">
+          <div class="section-title-wrap">
+            <div>
+              <h2 id="settings-heading" class="section-title">Settings</h2>
+              <p class="section-desc">Personalize the dashboard appearance and alert preferences</p>
+            </div>
+            <button type="button" class="btn btn-secondary" id="btn-settings-thresholds">
+              <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                <path d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3"/>
+                <path d="M1 14h6M9 8h6M17 16h6"/>
+              </svg>
+              Alert & storage settings
+            </button>
+          </div>
+
+          <div class="settings-page-grid">
+            <div class="card settings-theme-card">
+              <div class="card-header">
+                <div>
+                  <span class="card-kicker">APPEARANCE</span>
+                  <h3 class="card-title">Choose a theme</h3>
+                </div>
+                <span class="settings-live-note">Applied instantly</span>
+              </div>
+              <div class="theme-options" role="radiogroup" aria-label="Dashboard theme">
+                <button class="theme-option" type="button" data-theme-option="default" role="radio" aria-checked="false">
+                  <span class="theme-swatch theme-swatch-default"></span>
+                  <span><strong>Current</strong><small>Clean cyan</small></span>
+                </button>
+                <button class="theme-option" type="button" data-theme-option="midnight" role="radio" aria-checked="false">
+                  <span class="theme-swatch theme-swatch-midnight"></span>
+                  <span><strong>Midnight</strong><small>Deep black</small></span>
+                </button>
+                <button class="theme-option" type="button" data-theme-option="light" role="radio" aria-checked="false">
+                  <span class="theme-swatch theme-swatch-light"></span>
+                  <span><strong>Light</strong><small>Bright and clear</small></span>
+                </button>
+                <button class="theme-option" type="button" data-theme-option="ocean" role="radio" aria-checked="false">
+                  <span class="theme-swatch theme-swatch-ocean"></span>
+                  <span><strong>Ocean</strong><small>Blue focus</small></span>
+                </button>
+                <button class="theme-option" type="button" data-theme-option="forest" role="radio" aria-checked="false">
+                  <span class="theme-swatch theme-swatch-forest"></span>
+                  <span><strong>Forest</strong><small>Green focus</small></span>
+                </button>
+              </div>
             </div>
           </div>
         </section>
